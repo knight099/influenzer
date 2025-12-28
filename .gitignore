@@ -1,0 +1,15 @@
+# Binaries
+server
+*.exe
+*.dll
+
+# Env
+.env
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Module
+vendor/

@@ -1,0 +1,103 @@
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/gin-gonic/gin"
+	"github.com/vaibhaw/influenzer-backend/config"
+	httpDelivery "github.com/vaibhaw/influenzer-backend/internal/delivery/http"
+	wsDelivery "github.com/vaibhaw/influenzer-backend/internal/delivery/ws"
+	"github.com/vaibhaw/influenzer-backend/internal/repository"
+	"github.com/vaibhaw/influenzer-backend/internal/service"
+	"github.com/vaibhaw/influenzer-backend/pkg/database"
+	"github.com/vaibhaw/influenzer-backend/pkg/razorpay"
+	"github.com/vaibhaw/influenzer-backend/pkg/utils"
+
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	_ "github.com/vaibhaw/influenzer-backend/docs"
+)
+
+func main() {
+	// 1. Load Config
+	cfg, err := config.LoadConfig(".")
+	if err != nil {
+		log.Println("No .env file found, using environment variables")
+	}
+
+	// 2. Init Logger
+	utils.InitLogger()
+	defer utils.Logger.Sync()
+
+	utils.Logger.Info("Starting Influenzer Backend...")
+
+	// 3. Connect Database
+	if cfg.DatabaseURL != "" {
+		database.Connect(cfg.DatabaseURL)
+		database.AutoMigrate()
+	} else {
+		utils.Logger.Warn("DATABASE_URL not set, skipping DB connection")
+	}
+
+	// 4. Setup Router
+	r := gin.Default()
+
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status": "ok",
+		})
+	})
+
+	// 5. Setup Services
+	// - Auth
+	authRepo := repository.NewAuthRepository(database.DB)
+	authService := service.NewAuthService(authRepo, &cfg)
+	httpDelivery.NewAuthHandler(r, authService)
+
+	// - Middleware
+	authMiddleware := httpDelivery.AuthMiddleware(&cfg)
+
+	// - Marketplace
+	campaignRepo := repository.NewCampaignRepository(database.DB)
+	campaignService := service.NewCampaignService(campaignRepo)
+	httpDelivery.NewCampaignHandler(r, campaignService, authMiddleware)
+
+	proposalRepo := repository.NewProposalRepository(database.DB)
+	proposalService := service.NewProposalService(proposalRepo)
+	httpDelivery.NewProposalHandler(r, proposalService, authMiddleware)
+
+	// - Payments
+	rzpClient := razorpay.NewRazorpayClient(&cfg)
+	paymentService := service.NewPaymentService(proposalRepo, campaignRepo, rzpClient)
+	httpDelivery.NewPaymentHandler(r, paymentService, authMiddleware, database.DB)
+
+	// - Social
+	socialService := service.NewSocialService(proposalRepo, campaignRepo, authRepo)
+	httpDelivery.NewSocialHandler(r, socialService, authMiddleware)
+
+	// - New Modules (Refactor)
+	httpDelivery.NewJobHandler(r, database.DB, authMiddleware)
+	httpDelivery.NewCreatorHandler(r, database.DB, authMiddleware)
+	httpDelivery.NewChatHTTPHandler(r, database.DB, authMiddleware)
+
+	// - Chat (WS)
+	wsDelivery.NewChatHandler(r)
+
+	// - Swagger
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// Log all registered routes
+	utils.Logger.Info("Registered Routes:")
+	for _, route := range r.Routes() {
+		utils.Logger.Info(fmt.Sprintf("%s %s", route.Method, route.Path))
+	}
+
+	// 6. Start Server
+	port := cfg.Port
+	if port == "" {
+		port = "8080"
+	}
+	utils.Logger.Info(fmt.Sprintf("Server starting on port %s", port))
+	r.Run(":" + port)
+}
