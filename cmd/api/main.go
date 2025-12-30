@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/vaibhaw/influenzer-backend/config"
 	httpDelivery "github.com/vaibhaw/influenzer-backend/internal/delivery/http"
@@ -41,7 +43,19 @@ func main() {
 	}
 
 	// 4. Setup Router
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(httpDelivery.RequestLoggerMiddleware())
+
+	// CORS Config
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:8081", "http://localhost:3000"}, // Added potential generic port too
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
@@ -53,10 +67,11 @@ func main() {
 	// - Auth
 	authRepo := repository.NewAuthRepository(database.DB)
 	authService := service.NewAuthService(authRepo, &cfg)
-	httpDelivery.NewAuthHandler(r, authService)
 
 	// - Middleware
 	authMiddleware := httpDelivery.AuthMiddleware(&cfg)
+
+	httpDelivery.NewAuthHandler(r, authService, authMiddleware)
 
 	// - Marketplace
 	campaignRepo := repository.NewCampaignRepository(database.DB)

@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/vaibhaw/influenzer-backend/config"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
 	"golang.org/x/crypto/bcrypt"
+	"google.golang.org/api/idtoken"
 )
 
 type authService struct {
@@ -26,51 +29,87 @@ func NewAuthService(authRepo domain.AuthRepository, cfg *config.Config) domain.A
 	}
 }
 
-func (s *authService) LoginWithGoogle(ctx context.Context, code string) (string, *domain.User, error) {
-	// 1. Exchange code for token (Mocking this call or using library?
-	// For production, we need a real helper. I'll implement a simple HTTP fetch here for the Google UserInfo endpoint
-	// assuming the client sends the ACCESS TOKEN directly, OR separate exchange.
-	// NOTE: Usually FE sends Access Token, or Auth Code. If Code, we need generic OAuth exchange.
-	// Let's assume the FE sends the "code" and we exchange it. For simplicity in this step, I'll assume
-	// the `code` passed here is actually an ACCESS TOKEN for now to fetch user info,
-	// OR we implement the full exchange.
+func (s *authService) LoginWithGoogle(ctx context.Context, tokenString, providedName, providedAvatarURL string) (string, *domain.User, error) {
+	var email, googleID, name, picture string
 
-	// Let's implement the "Fetch User Info using Token" approach.
-	// If the user meant "Code Exchange", we need Google Client Secret.
-	// I will just implement fetching user info assuming `code` argument is a valid Access Token for simplicity,
-	// unless I have client ID/Secret. Since I don't have them in env, I'll rely on FE passing the access token.
-	// TODO: Clarify with user. For now, treating `code` as `access_token`.
+	// 1. Try to validate as ID Token
+	payload, err := idtoken.Validate(ctx, tokenString, s.cfg.GoogleClientID)
+	if err == nil {
+		// Valid ID Token
+		if e, ok := payload.Claims["email"].(string); ok {
+			email = e
+		}
+		googleID = payload.Subject
+		if n, ok := payload.Claims["name"].(string); ok {
+			name = n
+		}
+		if p, ok := payload.Claims["picture"].(string); ok {
+			picture = p
+		}
+	} else {
+		// Log the ID token validation error for debugging
+		fmt.Printf("ID Token validation failed: %v. Falling back to UserInfo endpoint.\n", err)
 
-	userInfo, err := s.fetchGoogleUserInfo(code)
-	if err != nil {
-		return "", nil, err
+		// 2. Fallback: Try to use as Access Token (Legacy method)
+		userInfo, err := s.fetchGoogleUserInfo(tokenString)
+		if err != nil {
+			return "", nil, errors.New("invalid google token: " + err.Error())
+		}
+		email = userInfo.Email
+		googleID = userInfo.ID
+		name = userInfo.Name
+		picture = userInfo.Picture
 	}
 
-	// 2. Check if user exists
-	user, err := s.authRepo.GetUserByEmail(ctx, userInfo.Email)
+	// Prefer frontend-provided values over API-fetched values
+	if providedName != "" {
+		name = providedName
+	}
+	if providedAvatarURL != "" {
+		picture = providedAvatarURL
+	}
+
+	// 3. User Lookup or Creation
+	user, err := s.authRepo.GetUserByEmail(ctx, email)
 	if err != nil {
-		// If not found (and it's a DB error other than RecordNotFound), return error
-		// Ideally checking specific error type, but standard GORM returns record not found error.
-		// We'll assume error means not found for simplicity or handle specific checking.
-		// Actually, let's try GetUserByGoogleID too.
+		// Check by GoogleID if email lookup failed (though usually email is consistent)
+		user, err = s.authRepo.GetUserByGoogleID(ctx, googleID)
 	}
 
 	if user == nil {
 		// Create new user
 		newUser := &domain.User{
-			Email:     userInfo.Email,
-			GoogleID:  userInfo.ID, // Google sub
-			AvatarURL: userInfo.Picture,
-			Role:      domain.RoleCreator, // Default to Creator? Or Force user to choose?
-			// Let's default to CREATOR for now, update later.
+			Email:     email,
+			Name:      name,
+			GoogleID:  googleID,
+			AvatarURL: picture,
+			Role:      domain.RoleCreator, // Default to Creator
 		}
 		if err := s.authRepo.CreateUser(ctx, newUser); err != nil {
 			return "", nil, err
 		}
 		user = newUser
+	} else {
+		// Update name/avatar if provided by frontend and different
+		needsUpdate := false
+		if user.GoogleID == "" {
+			user.GoogleID = googleID
+			needsUpdate = true
+		}
+		if providedName != "" && user.Name != providedName {
+			user.Name = providedName
+			needsUpdate = true
+		}
+		if providedAvatarURL != "" && user.AvatarURL != providedAvatarURL {
+			user.AvatarURL = providedAvatarURL
+			needsUpdate = true
+		}
+		if needsUpdate {
+			_ = s.authRepo.UpdateUser(ctx, user)
+		}
 	}
 
-	// 3. Generate JWT
+	// 4. Generate JWT
 	token, err := s.generateJWT(user)
 	if err != nil {
 		return "", nil, err
@@ -87,7 +126,9 @@ func (s *authService) fetchGoogleUserInfo(accessToken string) (*domain.GoogleUse
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New("failed to validate google token")
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		fmt.Printf("Google UserInfo API Error: Status=%d Body=%s\n", resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("failed to validate google token: %s", string(bodyBytes))
 	}
 
 	var userInfo domain.GoogleUserInfo
@@ -206,19 +247,102 @@ func (s *authService) ConnectSocial(ctx context.Context, userID, platform, authC
 		return err
 	}
 
-	// Mock exchanging Auth Code for Token
-	mockToken := "access_token_" + platform + "_" + authCode
+	// This Redirect URI must match what the Frontend used!
+	// For mobile apps it is often a custom scheme or localhost
+	// We might need to accept this as a parameter from FE.
+	// For now, defaulting to what works for common local dev setups or trying to be generic.
+	// Common Flutter Redirect: "com.vaibhaw.influenzer:/oauth2redirect" or similar?
+	// OR "http://localhost:8081/callback"
+
+	// TODO: ASK USER or Update Handler to accept RedirectURI
+	redirectURI := "http://localhost:8081/callback" // Placeholder default
 
 	if platform == "instagram" {
-		user.InstagramToken = mockToken
+		token, err := s.exchangeInstagramToken(authCode, redirectURI)
+		if err != nil {
+			return err
+		}
+		user.InstagramToken = token
 		if user.CreatorProfile != nil {
-			user.CreatorProfile.Platform = platform // naive update
+			user.CreatorProfile.Platform = platform
+			// In real flow, we might fetch follower count here too using the token
 		}
 	} else if platform == "youtube" {
-		user.YoutubeToken = mockToken
+		token, err := s.exchangeGoogleToken(authCode, redirectURI)
+		if err != nil {
+			return err
+		}
+		user.YoutubeToken = token
 	} else {
 		return errors.New("unsupported platform")
 	}
 
 	return s.authRepo.UpdateUser(ctx, user)
+}
+
+func (s *authService) exchangeInstagramToken(code, redirectURI string) (string, error) {
+	// Instagram Basic Display API
+	values := url.Values{}
+	values.Set("client_id", s.cfg.InstagramClientID)
+	values.Set("client_secret", s.cfg.InstagramClientSecret)
+	values.Set("grant_type", "authorization_code")
+	values.Set("redirect_uri", redirectURI)
+	values.Set("code", code)
+
+	resp, err := http.PostForm("https://api.instagram.com/oauth/access_token", values)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("instagram auth failed: %s", string(bodyBytes))
+	}
+
+	var res struct {
+		AccessToken string `json:"access_token"`
+		UserID      int64  `json:"user_id"`
+	}
+	if err := json.Unmarshal(bodyBytes, &res); err != nil {
+		return "", err
+	}
+
+	return res.AccessToken, nil
+}
+
+func (s *authService) exchangeGoogleToken(code, redirectURI string) (string, error) {
+	// Generic Google OAuth2 Exchange
+	values := url.Values{}
+	values.Set("client_id", s.cfg.GoogleClientID)
+	values.Set("client_secret", s.cfg.GoogleClientSecret)
+	values.Set("grant_type", "authorization_code")
+	values.Set("redirect_uri", redirectURI) // Should be "postmessage" if using GSI client on Web, or custom scheme on mobile
+	values.Set("code", code)
+
+	resp, err := http.PostForm("https://oauth2.googleapis.com/token", values)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		// Log error for debugging
+		fmt.Printf("Google Token Exchange failed: %s\n", string(bodyBytes))
+		return "", fmt.Errorf("google auth failed: %s", string(bodyBytes))
+	}
+
+	var res struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(bodyBytes, &res); err != nil {
+		return "", err
+	}
+
+	// We might want to store Refresh Token too if we want offline access!
+	// For now, storing Access Token. Ideally store JSON or both.
+	// Returning Access Token.
+	return res.AccessToken, nil
 }

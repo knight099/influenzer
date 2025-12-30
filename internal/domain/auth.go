@@ -15,7 +15,7 @@ type AuthRepository interface {
 
 // AuthService defines the business logic for authentication
 type AuthService interface {
-	LoginWithGoogle(ctx context.Context, code string) (string, *User, error)
+	LoginWithGoogle(ctx context.Context, code, name, avatarURL string) (string, *User, error)
 	LoginWithEmail(ctx context.Context, email, password string) (string, *User, error)
 	Register(ctx context.Context, email, password string, role Role) (string, *User, error)
 	ConnectSocial(ctx context.Context, userID, platform, authCode string) error

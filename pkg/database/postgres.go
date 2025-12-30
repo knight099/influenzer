@@ -14,7 +14,11 @@ var DB *gorm.DB
 
 func Connect(dsn string) {
 	var err error
-	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+	// Disable prepared statements to avoid cache invalidation issues with Neon serverless
+	DB, err = gorm.Open(postgres.New(postgres.Config{
+		DSN:                  dsn,
+		PreferSimpleProtocol: true, // Disables implicit prepared statement usage
+	}), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 

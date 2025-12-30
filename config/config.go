@@ -5,12 +5,16 @@ import (
 )
 
 type Config struct {
-	Environment       string `mapstructure:"ENVIRONMENT"`
-	Port              string `mapstructure:"PORT"`
-	DatabaseURL       string `mapstructure:"DATABASE_URL"`
-	JWTSecret         string `mapstructure:"JWT_SECRET"`
-	RazorpayKeyID     string `mapstructure:"RAZORPAY_KEY_ID"`
-	RazorpayKeySecret string `mapstructure:"RAZORPAY_KEY_SECRET"`
+	Environment           string `mapstructure:"ENVIRONMENT"`
+	Port                  string `mapstructure:"PORT"`
+	DatabaseURL           string `mapstructure:"DATABASE_URL"`
+	JWTSecret             string `mapstructure:"JWT_SECRET"`
+	RazorpayKeyID         string `mapstructure:"RAZORPAY_KEY_ID"`
+	RazorpayKeySecret     string `mapstructure:"RAZORPAY_KEY_SECRET"`
+	GoogleClientID        string `mapstructure:"GOOGLE_CLIENT_ID"`
+	GoogleClientSecret    string `mapstructure:"GOOGLE_CLIENT_SECRET"`
+	InstagramClientID     string `mapstructure:"INSTAGRAM_CLIENT_ID"`
+	InstagramClientSecret string `mapstructure:"INSTAGRAM_CLIENT_SECRET"`
 }
 
 func LoadConfig(path string) (config Config, err error) {

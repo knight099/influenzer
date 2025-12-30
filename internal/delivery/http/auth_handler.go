@@ -12,41 +12,51 @@ type AuthHandler struct {
 	authService domain.AuthService
 }
 
-func NewAuthHandler(r *gin.Engine, s domain.AuthService) {
+func NewAuthHandler(r *gin.Engine, s domain.AuthService, authMiddleware gin.HandlerFunc) {
 	handler := &AuthHandler{
 		authService: s,
 	}
 
 	authGroup := r.Group("/auth")
 	{
-		// Legacy / Existing
+		// Public
 		authGroup.POST("/google", handler.LegacyGoogleLogin)
-
-		// New Spec
 		authGroup.POST("/login/social", handler.SocialLogin)
 		authGroup.POST("/login/email", handler.EmailLogin)
 		authGroup.POST("/register", handler.Register)
-		authGroup.POST("/connect-social", handler.ConnectSocial) // Requires Auth?
+
+		// Protected
+		// We can't easily group if we want /auth prefix for both.
+		// So we apply middleware explicitly to specific routes or create a subgroup
+
+		protected := authGroup.Group("/")
+		protected.Use(authMiddleware)
+		{
+			protected.POST("/connect-social", handler.ConnectSocial)
+		}
 	}
 }
 
 // Reusing request structs where possible or defining new ones
 
 type socialLoginRequest struct {
-	Provider string `json:"provider" binding:"required"` // google, facebook
-	Token    string `json:"token" binding:"required"`
+	Provider  string `json:"provider" binding:"required"` // google, facebook
+	Token     string `json:"token" binding:"required"`
+	Name      string `json:"name"`       // Optional: display name from frontend
+	AvatarURL string `json:"avatar_url"` // Optional: avatar URL from frontend
 }
 
 func (h *AuthHandler) SocialLogin(c *gin.Context) {
 	var req socialLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Logger.Error("SocialLogin Bind Error: " + err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Currently mapped to Google login logic
 	if req.Provider == "google" {
-		token, user, err := h.authService.LoginWithGoogle(c.Request.Context(), req.Token)
+		token, user, err := h.authService.LoginWithGoogle(c.Request.Context(), req.Token, req.Name, req.AvatarURL)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			return
@@ -73,6 +83,7 @@ type emailLoginRequest struct {
 func (h *AuthHandler) EmailLogin(c *gin.Context) {
 	var req emailLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Logger.Error("EmailLogin Bind Error: " + err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -94,6 +105,7 @@ type registerRequest struct {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Logger.Error("Register Bind Error: " + err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -120,35 +132,25 @@ type connectSocialRequest struct {
 }
 
 func (h *AuthHandler) ConnectSocial(c *gin.Context) {
-	// This endpoint likely needs to be Protected (JWT required) to know which user.
-	// But it's defined in public /auth group in my code above?
-	// The Spec says "/auth/connect-social". Usually "/auth" is public.
-	// BUT connecting a social account implies an existing logged-in user session?
-	// OR it's part of registration flow?
-	// "Connect Creator Social Accounts" implies logged in.
-	// I should probably move it to a protected group OR parse token manually here.
-	// Let's assume passed Token in header is verified Middleware?
-	// Main.go didn't apply middleware to /auth group.
-	// I'll parse header manually here or assume client sends UserID in body? No, security risk.
-	// I'll check header for Bearer token.
-
-	// Simplest: Add Middleware to this specific route in definitions above?
-	// But `AuthMiddleware` is currently in `main.go`.
-	// I'll assume request has Header. I'll duplicate extraction or use middleware.
-	// Refactor in Next step: Pass AuthMiddleware to AuthHandler to use it?
-	// For now, I'll just check "Authorization" header manually since I can't easily change `NewAuthHandler` signature without breaking main.go compile temporarily.
-	// Actually, I can just not implement full protection here for MVP, or just ParseToken.
-
 	var req connectSocialRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		utils.Logger.Error("ConnectSocial Bind Error: " + err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
 		return
 	}
 
-	// Hack: Get UserID from somewhere.
-	// If the user meant "Login with Social", that's different.
-	// This is "Connect".
-	// I will return "Not Implemented" or Mock success for now, as I need JWT middleware integration here.
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	err := h.authService.ConnectSocial(c.Request.Context(), userID.(string), req.Platform, req.AuthCode)
+	if err != nil {
+		utils.Logger.Error("ConnectSocial Service Error: " + err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }

@@ -4,11 +4,49 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/vaibhaw/influenzer-backend/config"
+	"github.com/vaibhaw/influenzer-backend/pkg/utils"
+	"go.uber.org/zap"
 )
+
+func RequestLoggerMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		query := c.Request.URL.RawQuery
+
+		c.Next()
+
+		end := time.Now()
+		latency := end.Sub(start)
+
+		fields := []zap.Field{
+			zap.Int("status", c.Writer.Status()),
+			zap.String("method", c.Request.Method),
+			zap.String("path", path),
+			zap.String("query", query),
+			zap.String("ip", c.ClientIP()),
+			zap.String("user-agent", c.Request.UserAgent()),
+			zap.Duration("latency", latency),
+		}
+
+		if len(c.Errors) > 0 {
+			for _, e := range c.Errors.Errors() {
+				utils.Logger.Error(e)
+			}
+		}
+
+		if userID, exists := c.Get("userID"); exists {
+			fields = append(fields, zap.Any("user_id", userID))
+		}
+
+		utils.Logger.Info("API Request", fields...)
+	}
+}
 
 func AuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
