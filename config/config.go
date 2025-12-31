@@ -15,6 +15,7 @@ type Config struct {
 	GoogleClientSecret    string `mapstructure:"GOOGLE_CLIENT_SECRET"`
 	InstagramClientID     string `mapstructure:"INSTAGRAM_CLIENT_ID"`
 	InstagramClientSecret string `mapstructure:"INSTAGRAM_CLIENT_SECRET"`
+	InstagramRedirectURI  string `mapstructure:"INSTAGRAM_REDIRECT_URI"`
 }
 
 func LoadConfig(path string) (config Config, err error) {

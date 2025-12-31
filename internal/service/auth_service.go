@@ -248,16 +248,14 @@ func (s *authService) ConnectSocial(ctx context.Context, userID, platform, authC
 	}
 
 	// This Redirect URI must match what the Frontend used!
-	// For mobile apps it is often a custom scheme or localhost
-	// We might need to accept this as a parameter from FE.
-	// For now, defaulting to what works for common local dev setups or trying to be generic.
-	// Common Flutter Redirect: "com.vaibhaw.influenzer:/oauth2redirect" or similar?
-	// OR "http://localhost:8081/callback"
-
-	// TODO: ASK USER or Update Handler to accept RedirectURI
-	redirectURI := "http://localhost:8081/callback" // Placeholder default
+	redirectURI := "http://localhost:8081/callback" // Default fallback
 
 	if platform == "instagram" {
+		// Use configured redirect URI for Instagram
+		if s.cfg.InstagramRedirectURI != "" {
+			redirectURI = s.cfg.InstagramRedirectURI
+		}
+
 		token, err := s.exchangeInstagramToken(authCode, redirectURI)
 		if err != nil {
 			return err
