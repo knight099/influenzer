@@ -94,6 +94,7 @@ func main() {
 	// - New Modules (Refactor)
 	httpDelivery.NewJobHandler(r, database.DB, authMiddleware)
 	httpDelivery.NewCreatorHandler(r, database.DB, authMiddleware)
+	httpDelivery.NewBrandHandler(r, database.DB, authMiddleware)
 	httpDelivery.NewChatHTTPHandler(r, database.DB, authMiddleware)
 
 	// - Chat (WS)

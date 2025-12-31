@@ -50,6 +50,9 @@ type User struct {
 type BrandProfile struct {
 	UserID        uuid.UUID `gorm:"type:uuid;primaryKey" json:"user_id"`
 	CompanyName   string    `json:"company_name"`
+	ContactName   string    `json:"contact_name"`
+	Phone         string    `json:"phone"`
+	RoleInCompany string    `json:"role_in_company"`
 	GSTNumber     string    `json:"gst_number"`
 	WalletBalance float64   `gorm:"default:0" json:"wallet_balance"`
 	UpdatedAt     time.Time `json:"updated_at"`
