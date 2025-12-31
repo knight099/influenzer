@@ -35,6 +35,7 @@ func main() {
 	utils.Logger.Info("Starting Influenzer Backend...")
 
 	// 3. Connect Database
+	utils.Logger.Info(fmt.Sprintf("DATABASE_URL length: %d", len(cfg.DatabaseURL)))
 	if cfg.DatabaseURL != "" {
 		database.Connect(cfg.DatabaseURL)
 		database.AutoMigrate()
