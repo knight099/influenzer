@@ -35,6 +35,9 @@ func NewAuthHandler(r *gin.Engine, s domain.AuthService, authMiddleware gin.Hand
 			protected.POST("/connect-social", handler.ConnectSocial)
 		}
 	}
+
+	// OAuth Callback - serves HTML redirect page
+	r.GET("/callback", handler.ServeSocialCallback)
 }
 
 // Reusing request structs where possible or defining new ones
@@ -153,4 +156,87 @@ func (h *AuthHandler) ConnectSocial(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ServeSocialCallback serves an HTML page for OAuth redirects that deep links back to the mobile app
+func (h *AuthHandler) ServeSocialCallback(c *gin.Context) {
+	// Serve HTML that will redirect to the mobile app with query parameters
+	htmlContent := `<!DOCTYPE html>
+<html>
+<head>
+    <title>Redirecting...</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+            text-align: center;
+        }
+        .card {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            max-width: 90%;
+            width: 320px;
+        }
+        .btn {
+            background-color: #0095f6;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 16px;
+        }
+        .success-icon {
+            color: #4caf50;
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="success-icon">&#10003;</div>
+        <h2>Connected!</h2>
+        <p>Authorization successful.</p>
+        <p>Tap below to return to the app.</p>
+        
+        <a id="deepLinkBtn" href="#" class="btn">Open App</a>
+    </div>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get('code');
+        
+        if (code) {
+            // Construct Deep Link with /callback path for GoRouter
+            const deepLink = ` + "`influenzer://callback/callback${window.location.search}`" + `;
+            
+            document.getElementById('deepLinkBtn').href = deepLink;
+            
+            // Auto-redirect (optional)
+            // window.location.href = deepLink;
+        } else {
+            document.querySelector('h2').innerText = 'Error';
+            document.querySelector('p').innerText = 'No authorization code received.';
+            document.getElementById('deepLinkBtn').style.display = 'none';
+        }
+    </script>
+</body>
+</html>`
+
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, htmlContent)
 }
