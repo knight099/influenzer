@@ -22,6 +22,19 @@ func LoadConfig(path string) (config Config, err error) {
 	// Enable automatic environment variable reading
 	viper.AutomaticEnv()
 
+	// Explicitly bind environment variables (required for AutomaticEnv to work)
+	viper.BindEnv("ENVIRONMENT")
+	viper.BindEnv("PORT")
+	viper.BindEnv("DATABASE_URL")
+	viper.BindEnv("JWT_SECRET")
+	viper.BindEnv("RAZORPAY_KEY_ID")
+	viper.BindEnv("RAZORPAY_KEY_SECRET")
+	viper.BindEnv("GOOGLE_CLIENT_ID")
+	viper.BindEnv("GOOGLE_CLIENT_SECRET")
+	viper.BindEnv("INSTAGRAM_CLIENT_ID")
+	viper.BindEnv("INSTAGRAM_CLIENT_SECRET")
+	viper.BindEnv("INSTAGRAM_REDIRECT_URI")
+
 	// Try to read .env file (optional for local development)
 	viper.AddConfigPath(path)
 	viper.SetConfigName(".env")
