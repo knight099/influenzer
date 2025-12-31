@@ -19,6 +19,7 @@ type AuthService interface {
 	LoginWithEmail(ctx context.Context, email, password string) (string, *User, error)
 	Register(ctx context.Context, email, password string, role Role) (string, *User, error)
 	ConnectSocial(ctx context.Context, userID, platform, authCode string) error
+	SetRole(ctx context.Context, userID string, role Role) error
 	// Deprecated/Mocked
 	LinkEpisoddAccount(ctx context.Context, userID string, phone string) error
 	VerifyEpisoddOTP(ctx context.Context, userID string, otp string) error

@@ -77,13 +77,13 @@ func (s *authService) LoginWithGoogle(ctx context.Context, tokenString, provided
 	}
 
 	if user == nil {
-		// Create new user
+		// Create new user without a default role
 		newUser := &domain.User{
 			Email:     email,
 			Name:      name,
 			GoogleID:  googleID,
 			AvatarURL: picture,
-			Role:      domain.RoleCreator, // Default to Creator
+			// Role is empty - user must select via /auth/set-role
 		}
 		if err := s.authRepo.CreateUser(ctx, newUser); err != nil {
 			return "", nil, err
@@ -273,6 +273,25 @@ func (s *authService) ConnectSocial(ctx context.Context, userID, platform, authC
 		user.YoutubeToken = token
 	} else {
 		return errors.New("unsupported platform")
+	}
+
+	return s.authRepo.UpdateUser(ctx, user)
+}
+
+func (s *authService) SetRole(ctx context.Context, userID string, role domain.Role) error {
+	user, err := s.authRepo.GetBaseUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	// Update the user's role
+	user.Role = role
+
+	// Create appropriate profile based on role if it doesn't exist
+	if role == domain.RoleCreator && user.CreatorProfile == nil {
+		user.CreatorProfile = &domain.CreatorProfile{UserID: user.ID}
+	} else if role == domain.RoleBrand && user.BrandProfile == nil {
+		user.BrandProfile = &domain.BrandProfile{UserID: user.ID}
 	}
 
 	return s.authRepo.UpdateUser(ctx, user)

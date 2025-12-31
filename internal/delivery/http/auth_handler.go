@@ -33,6 +33,7 @@ func NewAuthHandler(r *gin.Engine, s domain.AuthService, authMiddleware gin.Hand
 		protected.Use(authMiddleware)
 		{
 			protected.POST("/connect-social", handler.ConnectSocial)
+			protected.POST("/set-role", handler.SetRole)
 		}
 	}
 
@@ -156,6 +157,41 @@ func (h *AuthHandler) ConnectSocial(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+type setRoleRequest struct {
+	Role domain.Role `json:"role" binding:"required"`
+}
+
+// SetRole allows authenticated users to set their role (BRAND or CREATOR)
+func (h *AuthHandler) SetRole(c *gin.Context) {
+	var req setRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Logger.Error("SetRole Bind Error: " + err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	// Validate role
+	if req.Role != domain.RoleBrand && req.Role != domain.RoleCreator {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role. Must be BRAND or CREATOR"})
+		return
+	}
+
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	err := h.authService.SetRole(c.Request.Context(), userID.(string), req.Role)
+	if err != nil {
+		utils.Logger.Error("SetRole Service Error: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update role"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "role": req.Role})
 }
 
 // ServeSocialCallback serves an HTML page for OAuth redirects that deep links back to the mobile app
