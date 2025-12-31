@@ -19,21 +19,25 @@ type Config struct {
 }
 
 func LoadConfig(path string) (config Config, err error) {
+	// Enable automatic environment variable reading
+	viper.AutomaticEnv()
+
+	// Try to read .env file (optional for local development)
 	viper.AddConfigPath(path)
 	viper.SetConfigName(".env")
 	viper.SetConfigType("env")
 
-	viper.AutomaticEnv()
-
 	err = viper.ReadInConfig()
 	if err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			// Config file was found but another error occurred
 			return
 		}
-		// Config file not found; ignore error if desired and rely on env vars
+		// Config file not found; ignore error and rely on env vars
 		err = nil
 	}
 
+	// Unmarshal config from both file and environment variables
 	err = viper.Unmarshal(&config)
 	return
 }
