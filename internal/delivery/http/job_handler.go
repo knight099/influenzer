@@ -29,6 +29,8 @@ func NewJobHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFunc) {
 
 func (h *JobHandler) GetFeed(c *gin.Context) {
 	niche := c.Query("niche")
+	userIDVal, exists := c.Get("userID")
+
 	var campaigns []domain.Campaign
 
 	query := h.db.Where("status = ?", domain.CampaignStatusOpen)
@@ -40,6 +42,20 @@ func (h *JobHandler) GetFeed(c *gin.Context) {
 
 	query.Find(&campaigns)
 
+	// Get applied campaign IDs for this user
+	appliedCampaigns := make(map[uuid.UUID]bool)
+	if exists {
+		// Ideally use a service, but direct DB here for now as per handler pattern
+		var proposalCampaignIDs []uuid.UUID
+		h.db.Model(&domain.Proposal{}).
+			Where("creator_id = ?", userIDVal).
+			Pluck("campaign_id", &proposalCampaignIDs)
+
+		for _, id := range proposalCampaignIDs {
+			appliedCampaigns[id] = true
+		}
+	}
+
 	// Map to simplified response
 	var response []map[string]interface{}
 	for _, camp := range campaigns {
@@ -49,6 +65,7 @@ func (h *JobHandler) GetFeed(c *gin.Context) {
 			"description": camp.Description,
 			"budget":      camp.Budget,
 			"platform":    camp.Platform,
+			"applied":     appliedCampaigns[camp.ID],
 		})
 	}
 
