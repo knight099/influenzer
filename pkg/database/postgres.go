@@ -56,4 +56,40 @@ func AutoMigrate() {
 		log.Fatal("Migration failed:", err)
 	}
 	log.Println("Database migration completed")
+	SeedPlans()
+}
+
+func SeedPlans() {
+	var count int64
+	DB.Model(&domain.SubscriptionPlan{}).Count(&count)
+	if count > 0 {
+		return
+	}
+
+	plans := []domain.SubscriptionPlan{
+		{
+			Name:           "Pro Annual",
+			Description:    "Yearly Subscription",
+			Amount:         10000,
+			Currency:       "INR",
+			Duration:       365,
+			RazorpayPlanID: "", // To be filled by user
+			IsActive:       true,
+		},
+		{
+			Name:           "Pro Monthly",
+			Description:    "Monthly Subscription",
+			Amount:         499,
+			Currency:       "INR",
+			Duration:       30,
+			RazorpayPlanID: "", // To be filled by user
+			IsActive:       true,
+		},
+	}
+
+	if err := DB.Create(&plans).Error; err != nil {
+		log.Printf("Failed to seed plans: %v", err)
+	} else {
+		log.Println("Seeded default subscription plans")
+	}
 }
