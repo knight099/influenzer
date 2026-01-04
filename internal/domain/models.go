@@ -100,6 +100,8 @@ type Proposal struct {
 	ProofURL          string         `json:"proof_url"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
+
+	Campaign Campaign `json:"campaign,omitempty" gorm:"foreignKey:CampaignID"`
 }
 
 type Transaction struct {

@@ -96,7 +96,7 @@ func (h *JobHandler) MyApplications(c *gin.Context) {
 	userIDVal, _ := c.Get("userID")
 
 	var proposals []domain.Proposal
-	h.db.Where("creator_id = ?", userIDVal).Find(&proposals)
+	h.db.Preload("Campaign").Where("creator_id = ?", userIDVal).Find(&proposals)
 
 	c.JSON(http.StatusOK, proposals)
 }
