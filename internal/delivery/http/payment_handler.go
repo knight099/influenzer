@@ -26,6 +26,7 @@ func NewPaymentHandler(r *gin.Engine, s service.PaymentService, authMiddleware g
 		p.POST("/create-order", handler.CreateOrder) // Renamed from create-escrow
 		p.POST("/verify", handler.VerifyPayment)     // New structured verify
 		p.POST("/release", handler.ReleaseFunds)     // Keep internal or specific flow
+		p.GET("/plans", handler.GetPlans)            // Fetch subscription plans
 	}
 
 	// Wallet Group
@@ -140,6 +141,16 @@ func (h *PaymentHandler) ReleaseFunds(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Funds released"})
+}
+
+func (h *PaymentHandler) GetPlans(c *gin.Context) {
+	var plans []domain.SubscriptionPlan
+	// Fetch only active plans
+	if err := h.db.Where("is_active = ?", true).Find(&plans).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch plans"})
+		return
+	}
+	c.JSON(http.StatusOK, plans)
 }
 
 // Webhook payload from Razorpay
