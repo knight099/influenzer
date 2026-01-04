@@ -121,3 +121,34 @@ type Message struct {
 	ImageURL   string    `json:"image_url"`
 	CreatedAt  time.Time `json:"created_at"`
 }
+
+type SubscriptionPlan struct {
+	ID             uuid.UUID              `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	Name           string                 `json:"name"`
+	Description    string                 `json:"description"`
+	Amount         float64                `json:"amount"` // in smallest currency unit if needed, but float for now
+	Currency       string                 `json:"currency" default:"INR"`
+	Duration       int                    `json:"duration"` // in days
+	RazorpayPlanID string                 `json:"razorpay_plan_id"`
+	Features       map[string]interface{} `gorm:"serializer:json" json:"features"`
+	IsActive       bool                   `json:"is_active" default:"true"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
+}
+
+type Subscription struct {
+	ID                     uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	UserID                 uuid.UUID `gorm:"type:uuid;not null" json:"user_id"`
+	PlanID                 uuid.UUID `gorm:"type:uuid;not null" json:"plan_id"`
+	RazorpaySubscriptionID string    `json:"razorpay_subscription_id"`
+	RazorpayPaymentID      string    `json:"razorpay_payment_id"`
+	Status                 string    `json:"status"` // created, authenticated, active, expired
+	StartDate              time.Time `json:"start_date"`
+	EndDate                time.Time `json:"end_date"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
+
+	// Relationships
+	User User             `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Plan SubscriptionPlan `gorm:"foreignKey:PlanID" json:"plan,omitempty"`
+}

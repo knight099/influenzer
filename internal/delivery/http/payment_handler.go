@@ -3,6 +3,7 @@ package http
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
@@ -187,31 +188,64 @@ func (h *PaymentHandler) Webhook(c *gin.Context) {
 		return
 	}
 
-	// Extract OrderID from payload
-	// payload -> payload -> payment -> entity -> order_id
-	// This is fragile without structs.
-
-	// ... Logic to extract orderID ...
-	// For robust implementation I'd use the razorpay-go library's webhook util if available.
-	// I'll focus on `release` and `create-escrow` first as they are critical.
-	// The `HandlePaymentSuccess` logic I wrote is definitely for Client Callback.
-	// I'll rename my Handler method `Callback` or `Success` and let `Webhook` be separate.
-
-	// Actually, looking at requirements: "POST /payments/webhook: Listen for payment.captured"
-	// Creating a separate endpoint `POST /payments/success` for the client to call seems safer for the MVP if Webhook setup is complex locally.
-	// BUT I must follow requirements.
-
-	// Let's implement /webhook, but make it call HandlePaymentSuccess logic IF I can extract data.
-	// OR I just implement /success and tell user "Using /success for Client Callback as it's easier to test without exposing localhost to public internet for Webhooks".
-	// I'll try to implement /webhook logic.
-
 	event, _ := payload["event"].(string)
-	if event == "payment.captured" {
-		// Extract IDs
-		// deep traversal...
-		// mock implementation for now
-		log.Println("Webhook received payment.captured")
-		// In a real app we'd parse this properly.
+
+	if event == "subscription.charged" {
+		log.Println("Received subscription.charged webhook")
+
+		// Navigate JSON safely
+		// payload -> payload -> subscription -> entity -> id
+		pl, ok := payload["payload"].(map[string]interface{})
+		if !ok {
+			return
+		}
+
+		subData, ok := pl["subscription"].(map[string]interface{})
+		if !ok {
+			return
+		}
+
+		entity, ok := subData["entity"].(map[string]interface{})
+		if !ok {
+			return
+		}
+
+		subID, _ := entity["id"].(string)
+		status, _ := entity["status"].(string) // active, completed, etc.
+
+		// Payment ID for reference
+		// usually in payload -> payment -> entity -> id
+		// But let's check paymeent entity presence
+		var paymentID string
+		if payData, ok := pl["payment"].(map[string]interface{}); ok {
+			if payEntity, ok := payData["entity"].(map[string]interface{}); ok {
+				paymentID, _ = payEntity["id"].(string)
+			}
+		}
+
+		// Update Subscription in DB
+		var subscription domain.Subscription
+		if err := h.db.Where("razorpay_subscription_id = ?", subID).First(&subscription).Error; err == nil {
+			subscription.Status = status
+			if paymentID != "" {
+				subscription.RazorpayPaymentID = paymentID
+			}
+			// Update dates if available
+			if endAt, ok := entity["current_end"].(float64); ok {
+				subscription.EndDate = time.Unix(int64(endAt), 0)
+			}
+			if startAt, ok := entity["current_start"].(float64); ok {
+				subscription.StartDate = time.Unix(int64(startAt), 0)
+			}
+
+			h.db.Save(&subscription)
+			log.Printf("Updated subscription %s status to %s", subID, status)
+		} else {
+			log.Printf("Subscription %s not found in DB", subID)
+		}
+	} else if event == "payment.captured" {
+		// Existing logic placeholder
+		log.Println("Webhook received payment.captured - Logic pending implementation")
 	}
 
 	c.JSON(200, gin.H{"status": "ok"})
