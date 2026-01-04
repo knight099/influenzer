@@ -32,3 +32,7 @@ func (s *proposalService) UpdateProposalStatus(ctx context.Context, id string, s
 func (s *proposalService) GetProposalByID(ctx context.Context, id string) (*domain.Proposal, error) {
 	return s.repo.GetByID(ctx, id)
 }
+
+func (s *proposalService) GetProposalsByCampaignID(ctx context.Context, campaignID string) ([]domain.Proposal, error) {
+	return s.repo.ListByCampaignID(ctx, campaignID)
+}

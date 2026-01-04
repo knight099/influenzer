@@ -44,10 +44,11 @@ func (h *JobHandler) GetFeed(c *gin.Context) {
 	var response []map[string]interface{}
 	for _, camp := range campaigns {
 		response = append(response, map[string]interface{}{
-			"id":       camp.ID,
-			"title":    camp.Title,
-			"budget":   camp.Budget,
-			"platform": camp.Platform,
+			"id":          camp.ID,
+			"title":       camp.Title,
+			"description": camp.Description,
+			"budget":      camp.Budget,
+			"platform":    camp.Platform,
 		})
 	}
 

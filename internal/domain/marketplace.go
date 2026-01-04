@@ -28,4 +28,5 @@ type ProposalService interface {
 	CreateProposal(ctx context.Context, proposal *Proposal) error
 	UpdateProposalStatus(ctx context.Context, id string, status ProposalStatus) error
 	GetProposalByID(ctx context.Context, id string) (*Proposal, error)
+	GetProposalsByCampaignID(ctx context.Context, campaignID string) ([]Proposal, error)
 }

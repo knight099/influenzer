@@ -19,6 +19,7 @@ func NewProposalHandler(r *gin.Engine, s domain.ProposalService, authMiddleware 
 	g.Use(authMiddleware)
 	{
 		g.POST("", handler.Create)
+		g.GET("/campaign/:campaignId", handler.GetByCampaignID)
 		g.PATCH("/:id/status", handler.UpdateStatus)
 	}
 }
@@ -65,6 +66,18 @@ func (h *ProposalHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, proposal)
+}
+
+func (h *ProposalHandler) GetByCampaignID(c *gin.Context) {
+	campaignID := c.Param("campaignId")
+
+	proposals, err := h.service.GetProposalsByCampaignID(c.Request.Context(), campaignID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, proposals)
 }
 
 type updateStatusRequest struct {

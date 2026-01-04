@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
@@ -41,48 +42,97 @@ func (h *CreatorHandler) Search(c *gin.Context) {
 
 	var creators []domain.CreatorProfile
 
-	query := h.db.Model(&domain.CreatorProfile{})
-	// User table join for name is ideal but for now simple search
+	query := h.db.Preload("User").Model(&domain.CreatorProfile{})
+
+	// Search by name in User table if query string provided
 	if queryStr != "" {
-		// Mock search or filter niche by query too
-		query = query.Where("niche ILIKE ?", "%"+queryStr+"%")
+		query = query.Joins("JOIN users ON users.id = creator_profiles.user_id").
+			Where("users.name ILIKE ? OR creator_profiles.niche ILIKE ?", "%"+queryStr+"%", "%"+queryStr+"%")
 	}
+
 	if niche != "" {
 		query = query.Where("niche ILIKE ?", "%"+niche+"%")
 	}
+
 	if platform != "" {
 		query = query.Where("platform = ?", platform)
 	}
-	// General query? Name in User table?
-	// Joining User table to filter by name?
-	// Too complex for MVP GORM single table?
-	// Let's assume query searches Niche for now or we join.
 
 	if err := query.Find(&creators).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// We need to return enriched data: Name, Avatar (from User table).
-	// Current DB structure: CreatorProfile has UserID.
-	// We should Preload User.
-
-	h.db.Preload("User").Find(&creators) // Re-run or optimize
-
-	// Map to response
+	// Map to enriched response with all requested fields
 	var response []map[string]interface{}
 	for _, cp := range creators {
-		// Mock Name fetch if User Relation issues
-		response = append(response, map[string]interface{}{
-			"id":       cp.UserID,
-			"niche":    cp.Niche,
-			"platform": cp.Platform,
-			// "name": cp.User.Name? User has no Name field in current model?
-			// Need to Add Name to User model or Brand/Creator profile?
-			// BrandProfile has CompanyName. CreatorProfile has... nothing for name explicitly?
-			// User has Email. AvatarURL.
-			// Let's assume Email implies name or add Name to User.
-		})
+		// Extract Instagram details from cached_stats
+		var instagramID, instagramUsername, instagramURL string
+		var instagramFollowers interface{}
+		if cp.CachedStats != nil {
+			if igData, ok := cp.CachedStats["instagram"].(map[string]interface{}); ok {
+				if id, ok := igData["id"].(string); ok {
+					instagramID = id
+				}
+				if username, ok := igData["username"].(string); ok {
+					instagramUsername = username
+					instagramURL = "https://instagram.com/" + username
+				}
+				if followers, ok := igData["followers_count"]; ok {
+					instagramFollowers = followers
+				}
+			}
+		}
+
+		// Extract YouTube details from cached_stats
+		var youtubeChannelID, youtubeChannelTitle, youtubeURL string
+		var youtubeSubscribers interface{}
+		if cp.CachedStats != nil {
+			if ytData, ok := cp.CachedStats["youtube"].(map[string]interface{}); ok {
+				if channelURL, ok := ytData["channel_url"].(string); ok {
+					youtubeChannelID = channelURL
+					youtubeURL = "https://youtube.com/" + channelURL
+				}
+				if title, ok := ytData["channel_title"].(string); ok {
+					youtubeChannelTitle = title
+				}
+				if subscribers, ok := ytData["subscriber_count"]; ok {
+					youtubeSubscribers = subscribers
+				}
+			}
+		}
+
+		// Get phone from CreatorProfile
+		phone := cp.Phone
+
+		creatorData := map[string]interface{}{
+			"id":         cp.UserID,
+			"name":       cp.User.Name,
+			"email":      cp.User.Email,
+			"phone":      phone,
+			"niche":      cp.Niche,
+			"min_budget": cp.MinBudget,
+			"platform":   cp.Platform,
+			"city":       cp.City,
+
+			// Instagram details
+			"instagram_id":        instagramID,
+			"instagram_username":  instagramUsername,
+			"instagram_url":       instagramURL,
+			"instagram_followers": instagramFollowers,
+
+			// YouTube details
+			"youtube_channel_id":    youtubeChannelID,
+			"youtube_channel_title": youtubeChannelTitle,
+			"youtube_url":           youtubeURL,
+			"youtube_subscribers":   youtubeSubscribers,
+
+			// Additional info
+			"avatar_url":   cp.User.AvatarURL,
+			"cached_stats": cp.CachedStats,
+		}
+
+		response = append(response, creatorData)
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -124,18 +174,32 @@ func (h *CreatorHandler) GetMyProfile(c *gin.Context) {
 		return
 	}
 
-	// Build connected platforms list
+	// Build connected platforms list with reconnection status
 	connectedPlatforms := []map[string]interface{}{}
 	if user.InstagramToken != "" {
+		needsReconnect := false
+		if user.CreatorProfile != nil && user.CreatorProfile.CachedStats != nil {
+			if errMsg, hasError := user.CreatorProfile.CachedStats["instagram_error"].(string); hasError {
+				needsReconnect = isTokenError(errMsg)
+			}
+		}
 		connectedPlatforms = append(connectedPlatforms, map[string]interface{}{
-			"platform":  "instagram",
-			"connected": true,
+			"platform":           "instagram",
+			"connected":          true,
+			"needs_reconnection": needsReconnect,
 		})
 	}
 	if user.YoutubeToken != "" {
+		needsReconnect := false
+		if user.CreatorProfile != nil && user.CreatorProfile.CachedStats != nil {
+			if errMsg, hasError := user.CreatorProfile.CachedStats["youtube_error"].(string); hasError {
+				needsReconnect = isTokenError(errMsg)
+			}
+		}
 		connectedPlatforms = append(connectedPlatforms, map[string]interface{}{
-			"platform":  "youtube",
-			"connected": true,
+			"platform":           "youtube",
+			"connected":          true,
+			"needs_reconnection": needsReconnect,
 		})
 	}
 
@@ -218,10 +282,48 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 		h.db.Save(user.CreatorProfile)
 	}
 
+	// Check if reconnection is needed for any platform
+	instagramNeedsReconnect := false
+	youtubeNeedsReconnect := false
+
+	if errMsg, hasError := stats["instagram_error"].(string); hasError {
+		instagramNeedsReconnect = isTokenError(errMsg)
+	}
+	if errMsg, hasError := stats["youtube_error"].(string); hasError {
+		youtubeNeedsReconnect = isTokenError(errMsg)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"stats":   stats,
+		"success":                      true,
+		"stats":                        stats,
+		"instagram_needs_reconnection": instagramNeedsReconnect,
+		"youtube_needs_reconnection":   youtubeNeedsReconnect,
 	})
+}
+
+// isTokenError checks if an error message indicates a token/authentication issue
+func isTokenError(errMsg string) bool {
+	// Check for common token error patterns
+	errorPatterns := []string{
+		"expired",
+		"invalid authentication",
+		"invalid token",
+		"invalid access token",
+		"authentication credentials",
+		"Session has expired",
+	}
+
+	for _, pattern := range errorPatterns {
+		if len(errMsg) > 0 && contains(errMsg, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// contains checks if a string contains a substring (case-insensitive)
+func contains(str, substr string) bool {
+	return strings.Contains(strings.ToLower(str), strings.ToLower(substr))
 }
 
 // YouTubeChannelResponse represents YouTube API response

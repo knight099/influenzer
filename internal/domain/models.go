@@ -63,11 +63,15 @@ type CreatorProfile struct {
 	Niche     string    `gorm:"type:text" json:"niche"` // Comma separated tags
 	MinBudget float64   `json:"min_budget"`
 	City      string    `json:"city"`
+	Phone     string    `json:"phone"`
 	Platform  string    `json:"platform"` // e.g. "instagram", "youtube"
 	// JSONB for stats
 	CachedStats map[string]interface{} `gorm:"serializer:json" json:"cached_stats"`
 	Portfolio   map[string]interface{} `gorm:"serializer:json" json:"portfolio"` // Store video links
 	UpdatedAt   time.Time              `json:"updated_at"`
+
+	// Relationship
+	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
 }
 
 type Campaign struct {
