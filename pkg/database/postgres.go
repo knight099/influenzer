@@ -68,20 +68,42 @@ func SeedPlans() {
 
 	plans := []domain.SubscriptionPlan{
 		{
-			Name:           "Pro Annual",
-			Description:    "Yearly Subscription",
-			Amount:         10000,
+			Name:           "Creator Pro Monthly",
+			Description:    "Monthly Subscription for Creators",
+			Amount:         499,
 			Currency:       "INR",
-			Duration:       365,
+			Duration:       30,
+			TargetRole:     domain.RoleCreator,
 			RazorpayPlanID: "", // To be filled by user
 			IsActive:       true,
 		},
 		{
-			Name:           "Pro Monthly",
-			Description:    "Monthly Subscription",
-			Amount:         499,
+			Name:           "Creator Pro Annual",
+			Description:    "Yearly Subscription for Creators",
+			Amount:         4999,
+			Currency:       "INR",
+			Duration:       365,
+			TargetRole:     domain.RoleCreator,
+			RazorpayPlanID: "", // To be filled by user
+			IsActive:       true,
+		},
+		{
+			Name:           "Brand Pro Monthly",
+			Description:    "Monthly Subscription for Brands",
+			Amount:         999,
 			Currency:       "INR",
 			Duration:       30,
+			TargetRole:     domain.RoleBrand,
+			RazorpayPlanID: "", // To be filled by user
+			IsActive:       true,
+		},
+		{
+			Name:           "Brand Pro Annual",
+			Description:    "Yearly Subscription for Brands",
+			Amount:         9999,
+			Currency:       "INR",
+			Duration:       365,
+			TargetRole:     domain.RoleBrand,
 			RazorpayPlanID: "", // To be filled by user
 			IsActive:       true,
 		},

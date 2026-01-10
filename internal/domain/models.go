@@ -128,7 +128,8 @@ type SubscriptionPlan struct {
 	Description    string                 `json:"description"`
 	Amount         float64                `json:"amount"` // in smallest currency unit if needed, but float for now
 	Currency       string                 `json:"currency" default:"INR"`
-	Duration       int                    `json:"duration"` // in days
+	Duration       int                    `json:"duration"`                            // in days
+	TargetRole     Role                   `gorm:"type:varchar(20)" json:"target_role"` // CREATOR or BRAND
 	RazorpayPlanID string                 `json:"razorpay_plan_id"`
 	Features       map[string]interface{} `gorm:"serializer:json" json:"features"`
 	IsActive       bool                   `json:"is_active" default:"true"`

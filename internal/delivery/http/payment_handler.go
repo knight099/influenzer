@@ -6,27 +6,32 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
 	"github.com/vaibhaw/influenzer-backend/internal/service"
+	"github.com/vaibhaw/influenzer-backend/pkg/razorpay"
 	"gorm.io/gorm"
 )
 
 type PaymentHandler struct {
 	service service.PaymentService
 	db      *gorm.DB
+	rzp     razorpay.Client
 }
 
-func NewPaymentHandler(r *gin.Engine, s service.PaymentService, authMiddleware gin.HandlerFunc, db *gorm.DB) {
-	handler := &PaymentHandler{service: s, db: db}
+func NewPaymentHandler(r *gin.Engine, s service.PaymentService, authMiddleware gin.HandlerFunc, db *gorm.DB, rzp razorpay.Client) {
+	handler := &PaymentHandler{service: s, db: db, rzp: rzp}
 
 	// Payments Group
 	p := r.Group("/payments")
 	p.Use(authMiddleware)
 	{
-		p.POST("/create-order", handler.CreateOrder) // Renamed from create-escrow
-		p.POST("/verify", handler.VerifyPayment)     // New structured verify
-		p.POST("/release", handler.ReleaseFunds)     // Keep internal or specific flow
-		p.GET("/plans", handler.GetPlans)            // Fetch subscription plans
+		p.POST("/create-order", handler.CreateOrder)              // Renamed from create-escrow
+		p.POST("/verify", handler.VerifyPayment)                  // New structured verify
+		p.POST("/release", handler.ReleaseFunds)                  // Keep internal or specific flow
+		p.GET("/plans", handler.GetPlans)                         // Fetch subscription plans
+		p.POST("/subscribe", handler.Subscribe)                   // Create subscription
+		p.GET("/subscription/status", handler.SubscriptionStatus) // Check subscription status
 	}
 
 	// Wallet Group
@@ -151,6 +156,131 @@ func (h *PaymentHandler) GetPlans(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, plans)
+}
+
+type subscribeRequest struct {
+	PlanID string `json:"plan_id" binding:"required"`
+}
+
+type subscribeResponse struct {
+	SubscriptionID string `json:"subscription_id"`
+	ShortURL       string `json:"short_url"`
+}
+
+func (h *PaymentHandler) Subscribe(c *gin.Context) {
+	var req subscribeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get user ID from context
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	userID := userIDVal.(uuid.UUID)
+
+	// Fetch the plan
+	var plan domain.SubscriptionPlan
+	if err := h.db.Where("id = ? AND is_active = ?", req.PlanID, true).First(&plan).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Plan not found or inactive"})
+		return
+	}
+
+	// Check if plan has Razorpay Plan ID configured
+	if plan.RazorpayPlanID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Plan not configured for subscriptions"})
+		return
+	}
+
+	// Create subscription in Razorpay
+	// total_count = 12 for monthly (1 year), 1 for yearly
+	totalCount := 12 // default for monthly
+	if plan.Duration >= 365 {
+		totalCount = 1 // yearly plan
+	}
+
+	notes := map[string]interface{}{
+		"user_id": userID.String(),
+		"plan_id": plan.ID.String(),
+	}
+
+	subscriptionID, shortURL, err := h.rzp.CreateSubscription(plan.RazorpayPlanID, totalCount, 1, notes)
+	if err != nil {
+		log.Printf("Failed to create Razorpay subscription: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create subscription"})
+		return
+	}
+
+	// Store subscription in database
+	subscription := domain.Subscription{
+		UserID:                 userID,
+		PlanID:                 plan.ID,
+		RazorpaySubscriptionID: subscriptionID,
+		Status:                 "created",
+	}
+
+	if err := h.db.Create(&subscription).Error; err != nil {
+		log.Printf("Failed to save subscription to DB: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save subscription"})
+		return
+	}
+
+	c.JSON(http.StatusOK, subscribeResponse{
+		SubscriptionID: subscriptionID,
+		ShortURL:       shortURL,
+	})
+}
+
+type subscriptionStatusResponse struct {
+	HasSubscription bool                     `json:"has_subscription"`
+	Subscription    *domain.Subscription     `json:"subscription,omitempty"`
+	Plan            *domain.SubscriptionPlan `json:"plan,omitempty"`
+	IsActive        bool                     `json:"is_active"`
+}
+
+func (h *PaymentHandler) SubscriptionStatus(c *gin.Context) {
+	// Get user ID from context
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	userID := userIDVal.(uuid.UUID)
+
+	// Find the user's latest subscription
+	var subscription domain.Subscription
+	err := h.db.Where("user_id = ?", userID).
+		Order("created_at DESC").
+		First(&subscription).Error
+
+	if err != nil {
+		// No subscription found
+		c.JSON(http.StatusOK, subscriptionStatusResponse{
+			HasSubscription: false,
+			IsActive:        false,
+		})
+		return
+	}
+
+	// Fetch the plan details
+	var plan domain.SubscriptionPlan
+	if err := h.db.Where("id = ?", subscription.PlanID).First(&plan).Error; err != nil {
+		log.Printf("Failed to fetch plan for subscription: %v", err)
+	}
+
+	// Check if subscription is active
+	isActive := subscription.Status == "active" &&
+		(subscription.EndDate.IsZero() || subscription.EndDate.After(time.Now()))
+
+	c.JSON(http.StatusOK, subscriptionStatusResponse{
+		HasSubscription: true,
+		Subscription:    &subscription,
+		Plan:            &plan,
+		IsActive:        isActive,
+	})
 }
 
 // Webhook payload from Razorpay

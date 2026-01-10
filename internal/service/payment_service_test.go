@@ -59,6 +59,10 @@ func (m *MockClient) TransferFunds(acc string, amt float64, cur string, notes ma
 	args := m.Called(acc, amt, cur, notes)
 	return args.String(0), args.Error(1)
 }
+func (m *MockClient) CreateSubscription(planID string, totalCount int, customerNotify int, notes map[string]interface{}) (string, string, error) {
+	args := m.Called(planID, totalCount, customerNotify, notes)
+	return args.String(0), args.String(1), args.Error(2)
+}
 
 func TestCreateEscrow(t *testing.T) {
 	repo := new(MockProposalRepo)
