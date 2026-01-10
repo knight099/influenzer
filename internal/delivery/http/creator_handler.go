@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
@@ -221,6 +222,36 @@ func (h *CreatorHandler) GetMyProfile(c *gin.Context) {
 		response["platform"] = user.CreatorProfile.Platform
 		response["cached_stats"] = user.CreatorProfile.CachedStats
 		response["portfolio"] = user.CreatorProfile.Portfolio
+	}
+
+	// Check subscription status
+	var subscription domain.Subscription
+	subscriptionActive := false
+	var subscriptionPlan *domain.SubscriptionPlan
+
+	if err := h.db.Where("user_id = ? AND status = ?", user.ID, "active").
+		Order("created_at DESC").
+		First(&subscription).Error; err == nil {
+		// Check if subscription is still valid
+		if subscription.EndDate.IsZero() || subscription.EndDate.After(time.Now()) {
+			subscriptionActive = true
+			// Fetch plan details
+			var plan domain.SubscriptionPlan
+			if err := h.db.Where("id = ?", subscription.PlanID).First(&plan).Error; err == nil {
+				subscriptionPlan = &plan
+			}
+		}
+	}
+
+	response["is_subscribed"] = subscriptionActive
+	if subscriptionActive && subscriptionPlan != nil {
+		response["subscription"] = gin.H{
+			"plan_name":  subscriptionPlan.Name,
+			"plan_id":    subscriptionPlan.ID,
+			"start_date": subscription.StartDate,
+			"end_date":   subscription.EndDate,
+			"status":     subscription.Status,
+		}
 	}
 
 	c.JSON(http.StatusOK, response)
