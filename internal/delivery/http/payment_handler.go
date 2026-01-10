@@ -180,7 +180,16 @@ func (h *PaymentHandler) Subscribe(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	userID := userIDVal.(uuid.UUID)
+	userIDStr, ok := userIDVal.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
+	}
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
+		return
+	}
 
 	// Fetch the plan
 	var plan domain.SubscriptionPlan
@@ -248,11 +257,20 @@ func (h *PaymentHandler) SubscriptionStatus(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	userID := userIDVal.(uuid.UUID)
+	userIDStr, ok := userIDVal.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
+	}
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
+		return
+	}
 
 	// Find the user's latest subscription
 	var subscription domain.Subscription
-	err := h.db.Where("user_id = ?", userID).
+	err = h.db.Where("user_id = ?", userID).
 		Order("created_at DESC").
 		First(&subscription).Error
 
