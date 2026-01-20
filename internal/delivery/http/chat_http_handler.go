@@ -27,22 +27,95 @@ func NewChatHTTPHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFu
 }
 
 func (h *ChatHTTPHandler) ListConversations(c *gin.Context) {
-	// Conversations are implied by Proposals in this simple model?
-	// Or distinct Conversation Table?
-	// Spec says: { "user": "...", "last_message": "..." }
-	// We'll use Proposals as "Chat Rooms" for now.
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	userIDStr, _ := userIDVal.(string)
+	userID, _ := uuid.Parse(userIDStr)
 
-	// Complex Query: Get Proposals where I am Creator OR I am Brand (via Campaign)
-	// For MVP: Just list proposals.
+	// Get user to determine role
+	var user domain.User
+	if err := h.db.Where("id = ?", userID).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
 
-	// Mock response for structure alignment
-	c.JSON(http.StatusOK, []gin.H{
-		{
-			"id":           "proposal-id-1",
-			"user":         "Other User Name", // Needs join
-			"last_message": "Hello!",
-		},
-	})
+	var proposals []domain.Proposal
+	var conversations []gin.H
+
+	if user.Role == domain.RoleCreator {
+		// Creator: Get proposals where they are the creator
+		if err := h.db.Preload("Campaign").Where("creator_id = ?", userID).Find(&proposals).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		for _, p := range proposals {
+			// Get brand info
+			var brand domain.User
+			h.db.Where("id = ?", p.Campaign.BrandID).First(&brand)
+
+			// Get last message
+			var lastMsg domain.Message
+			h.db.Where("proposal_id = ?", p.ID).Order("created_at DESC").First(&lastMsg)
+
+			conversations = append(conversations, gin.H{
+				"id":           p.ID,
+				"user":         brand.Name,
+				"user_id":      brand.ID,
+				"avatar_url":   brand.AvatarURL,
+				"last_message": lastMsg.Content,
+				"updated_at":   lastMsg.CreatedAt,
+			})
+		}
+	} else if user.Role == domain.RoleBrand {
+		// Brand: Get proposals for campaigns they own
+		var campaigns []domain.Campaign
+		if err := h.db.Where("brand_id = ?", userID).Find(&campaigns).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		var campaignIDs []uuid.UUID
+		for _, c := range campaigns {
+			campaignIDs = append(campaignIDs, c.ID)
+		}
+
+		if len(campaignIDs) > 0 {
+			if err := h.db.Where("campaign_id IN ?", campaignIDs).Find(&proposals).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+		}
+
+		for _, p := range proposals {
+			// Get creator info
+			var creator domain.User
+			h.db.Where("id = ?", p.CreatorID).First(&creator)
+
+			// Get last message
+			var lastMsg domain.Message
+			h.db.Where("proposal_id = ?", p.ID).Order("created_at DESC").First(&lastMsg)
+
+			conversations = append(conversations, gin.H{
+				"id":           p.ID,
+				"user":         creator.Name,
+				"user_id":      creator.ID,
+				"avatar_url":   creator.AvatarURL,
+				"last_message": lastMsg.Content,
+				"updated_at":   lastMsg.CreatedAt,
+			})
+		}
+	}
+
+	// Return empty array if no conversations
+	if conversations == nil {
+		conversations = []gin.H{}
+	}
+
+	c.JSON(http.StatusOK, conversations)
 }
 
 func (h *ChatHTTPHandler) GetHistory(c *gin.Context) {
