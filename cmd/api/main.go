@@ -98,8 +98,8 @@ func main() {
 	httpDelivery.NewBrandHandler(r, database.DB, authMiddleware)
 	httpDelivery.NewChatHTTPHandler(r, database.DB, authMiddleware)
 
-	// - Chat (WS)
-	wsDelivery.NewChatHandler(r)
+	// - Chat (WS) - with DB for persistence and JWT for auth
+	wsDelivery.NewChatHandler(r, database.DB, cfg.JWTSecret)
 
 	// - Swagger
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
