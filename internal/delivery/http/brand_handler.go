@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
@@ -119,5 +120,42 @@ func (h *BrandHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, profile)
+	// Fetch subscription status
+	var subscription domain.Subscription
+	hasSubscription := false
+	isActive := false
+	var planDetails *domain.SubscriptionPlan
+
+	err := h.db.Where("user_id = ?", userID).
+		Order("created_at DESC").
+		First(&subscription).Error
+
+	if err == nil {
+		hasSubscription = true
+		// Check if subscription is active
+		isActive = subscription.Status == "active" &&
+			(subscription.EndDate.IsZero() || subscription.EndDate.After(time.Now()))
+
+		// Fetch plan details
+		var plan domain.SubscriptionPlan
+		if err := h.db.Where("id = ?", subscription.PlanID).First(&plan).Error; err == nil {
+			planDetails = &plan
+		}
+	}
+
+	// Response with profile and subscription info
+	c.JSON(http.StatusOK, gin.H{
+		"user_id":          profile.UserID,
+		"company_name":     profile.CompanyName,
+		"contact_name":     profile.ContactName,
+		"phone":            profile.Phone,
+		"role_in_company":  profile.RoleInCompany,
+		"gst_number":       profile.GSTNumber,
+		"wallet_balance":   profile.WalletBalance,
+		"updated_at":       profile.UpdatedAt,
+		"has_subscription": hasSubscription,
+		"is_subscribed":    isActive,
+		"subscription":     &subscription,
+		"plan":             planDetails,
+	})
 }
