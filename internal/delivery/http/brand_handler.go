@@ -126,15 +126,14 @@ func (h *BrandHandler) GetProfile(c *gin.Context) {
 	isActive := false
 	var planDetails *domain.SubscriptionPlan
 
-	err := h.db.Where("user_id = ?", userID).
+	err := h.db.Where("user_id = ? AND status = ?", userID, "active").
 		Order("created_at DESC").
 		First(&subscription).Error
 
 	if err == nil {
 		hasSubscription = true
-		// Check if subscription is active
-		isActive = subscription.Status == "active" &&
-			(subscription.EndDate.IsZero() || subscription.EndDate.After(time.Now()))
+		// Status is already filtered to "active", just check date validity
+		isActive = subscription.EndDate.IsZero() || subscription.EndDate.After(time.Now())
 
 		// Fetch plan details
 		var plan domain.SubscriptionPlan
