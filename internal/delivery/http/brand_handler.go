@@ -31,6 +31,7 @@ type updateBrandProfileRequest struct {
 	ContactName   string `json:"contact_name"`
 	Phone         string `json:"phone"`
 	RoleInCompany string `json:"role_in_company"`
+	Website       string `json:"website"`
 }
 
 // UpdateProfile updates or creates the brand profile for the authenticated user
@@ -72,6 +73,7 @@ func (h *BrandHandler) UpdateProfile(c *gin.Context) {
 			ContactName:   req.ContactName,
 			Phone:         req.Phone,
 			RoleInCompany: req.RoleInCompany,
+			Website:       req.Website,
 		}
 		if err := h.db.Create(&profile).Error; err != nil {
 			utils.Logger.Error("Failed to create brand profile: " + err.Error())
@@ -88,6 +90,7 @@ func (h *BrandHandler) UpdateProfile(c *gin.Context) {
 		profile.ContactName = req.ContactName
 		profile.Phone = req.Phone
 		profile.RoleInCompany = req.RoleInCompany
+		profile.Website = req.Website
 
 		if err := h.db.Save(&profile).Error; err != nil {
 			utils.Logger.Error("Failed to update brand profile: " + err.Error())
@@ -150,6 +153,7 @@ func (h *BrandHandler) GetProfile(c *gin.Context) {
 		"phone":            profile.Phone,
 		"role_in_company":  profile.RoleInCompany,
 		"gst_number":       profile.GSTNumber,
+		"website":          profile.Website,
 		"wallet_balance":   profile.WalletBalance,
 		"updated_at":       profile.UpdatedAt,
 		"has_subscription": hasSubscription,
