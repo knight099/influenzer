@@ -153,3 +153,55 @@ type Subscription struct {
 	User User             `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Plan SubscriptionPlan `gorm:"foreignKey:PlanID" json:"plan,omitempty"`
 }
+
+type NotificationType string
+
+const (
+	NotifNewProposal      NotificationType = "NEW_PROPOSAL"
+	NotifProposalAccepted NotificationType = "PROPOSAL_ACCEPTED"
+	NotifProposalRejected NotificationType = "PROPOSAL_REJECTED"
+	NotifNewMessage       NotificationType = "NEW_MESSAGE"
+	NotifCampaignCreated  NotificationType = "CAMPAIGN_CREATED"
+	NotifPaymentReceived  NotificationType = "PAYMENT_RECEIVED"
+)
+
+type Notification struct {
+	ID         uuid.UUID        `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	UserID     uuid.UUID        `gorm:"type:uuid;not null;index" json:"user_id"`
+	Type       NotificationType `gorm:"type:varchar(50);not null" json:"type"`
+	Title      string           `json:"title"`
+	Body       string           `json:"body"`
+	ResourceID string           `json:"resource_id"`
+	IsRead     bool             `gorm:"default:false" json:"is_read"`
+	CreatedAt  time.Time        `json:"created_at"`
+}
+
+type DeviceToken struct {
+	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	UserID    uuid.UUID `gorm:"type:uuid;not null;index" json:"user_id"`
+	Token     string    `gorm:"not null;uniqueIndex" json:"token"`
+	Platform  string    `gorm:"type:varchar(20)" json:"platform"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type NotificationRepository interface {
+	Create(n *Notification) error
+	ListByUserID(userID uuid.UUID, limit int) ([]Notification, error)
+	MarkRead(id uuid.UUID, userID uuid.UUID) error
+	MarkAllRead(userID uuid.UUID) error
+	UnreadCount(userID uuid.UUID) (int64, error)
+	GetDeviceTokens(userID uuid.UUID) ([]string, error)
+	SaveDeviceToken(token *DeviceToken) error
+	DeleteDeviceToken(userID uuid.UUID, token string) error
+}
+
+type NotificationService interface {
+	Notify(userID uuid.UUID, nType NotificationType, title, body, resourceID string)
+	List(userID uuid.UUID) ([]Notification, error)
+	MarkRead(id string, userID uuid.UUID) error
+	MarkAllRead(userID uuid.UUID) error
+	UnreadCount(userID uuid.UUID) (int64, error)
+	RegisterDevice(userID uuid.UUID, token, platform string) error
+	UnregisterDevice(userID uuid.UUID, token string) error
+}

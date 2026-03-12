@@ -51,6 +51,8 @@ func AutoMigrate() {
 		&domain.Transaction{},
 		&domain.SubscriptionPlan{},
 		&domain.Subscription{},
+		&domain.Notification{},
+		&domain.DeviceToken{},
 	)
 	if err != nil {
 		log.Fatal("Migration failed:", err)

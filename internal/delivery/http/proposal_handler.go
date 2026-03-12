@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -9,11 +11,23 @@ import (
 )
 
 type ProposalHandler struct {
-	service domain.ProposalService
+	service      domain.ProposalService
+	notifSvc     domain.NotificationService
+	campaignRepo domain.CampaignRepository
 }
 
-func NewProposalHandler(r *gin.Engine, s domain.ProposalService, authMiddleware gin.HandlerFunc) {
-	handler := &ProposalHandler{service: s}
+func NewProposalHandler(
+	r *gin.Engine,
+	s domain.ProposalService,
+	authMiddleware gin.HandlerFunc,
+	notifSvc domain.NotificationService,
+	campaignRepo domain.CampaignRepository,
+) {
+	handler := &ProposalHandler{
+		service:      s,
+		notifSvc:     notifSvc,
+		campaignRepo: campaignRepo,
+	}
 
 	g := r.Group("/proposals")
 	g.Use(authMiddleware)
@@ -65,6 +79,21 @@ func (h *ProposalHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Notify the brand that owns this campaign
+	go func() {
+		campaign, err := h.campaignRepo.GetByID(context.Background(), req.CampaignID)
+		if err != nil {
+			return
+		}
+		h.notifSvc.Notify(
+			campaign.BrandID,
+			domain.NotifNewProposal,
+			"New Proposal Received",
+			fmt.Sprintf("A creator submitted a proposal for \"%s\" with a bid of ₹%.0f", campaign.Title, req.BidAmount),
+			proposal.ID.String(),
+		)
+	}()
+
 	c.JSON(http.StatusCreated, proposal)
 }
 
@@ -92,24 +121,41 @@ func (h *ProposalHandler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	// TODO: Verify if the User (Brand) owns the campaign related to this proposal!
-	// Skipping ownership check for speed, but MUST be here in prod.
-
 	status := domain.ProposalStatus(req.Status)
 
-	// Simple validation
-	switch status {
-	case domain.ProposalStatusApproved, domain.ProposalStatusFunded: // etc
-		// ok
-	default:
-		// c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status"})
-		// return
+	// Fetch proposal before update to get creatorID
+	proposal, err := h.service.GetProposalByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "proposal not found"})
+		return
 	}
 
 	if err := h.service.UpdateProposalStatus(c.Request.Context(), id, status); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Notify creator about status change
+	go func() {
+		switch status {
+		case domain.ProposalStatusApproved:
+			h.notifSvc.Notify(
+				proposal.CreatorID,
+				domain.NotifProposalAccepted,
+				"Proposal Accepted! 🎉",
+				fmt.Sprintf("Your proposal for \"%s\" has been accepted. Check your messages.", proposal.Campaign.Title),
+				proposal.ID.String(),
+			)
+		case domain.ProposalStatus("REJECTED"):
+			h.notifSvc.Notify(
+				proposal.CreatorID,
+				domain.NotifProposalRejected,
+				"Proposal Update",
+				fmt.Sprintf("Your proposal for \"%s\" was not selected this time.", proposal.Campaign.Title),
+				proposal.ID.String(),
+			)
+		}
+	}()
 
 	c.JSON(http.StatusOK, gin.H{"message": "Status updated"})
 }

@@ -81,7 +81,12 @@ func main() {
 
 	proposalRepo := repository.NewProposalRepository(database.DB)
 	proposalService := service.NewProposalService(proposalRepo)
-	httpDelivery.NewProposalHandler(r, proposalService, authMiddleware)
+
+	// - Notifications (init before handlers that trigger them)
+	notifRepo := repository.NewNotificationRepository(database.DB)
+	notifService := service.NewNotificationService(notifRepo)
+	httpDelivery.NewNotificationHandler(r, notifService, authMiddleware)
+	httpDelivery.NewProposalHandler(r, proposalService, authMiddleware, notifService, campaignRepo)
 
 	// - Payments
 	rzpClient := razorpay.NewRazorpayClient(&cfg)
