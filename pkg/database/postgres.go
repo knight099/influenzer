@@ -53,6 +53,7 @@ func AutoMigrate() {
 		&domain.Subscription{},
 		&domain.Notification{},
 		&domain.DeviceToken{},
+		&domain.DirectConversation{},
 	)
 	if err != nil {
 		log.Fatal("Migration failed:", err)

@@ -116,11 +116,20 @@ type Transaction struct {
 
 type Message struct {
 	ID         uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	ProposalID uuid.UUID `gorm:"type:uuid;not null" json:"proposal_id"` // Room ID is usually Proposal ID
+	ProposalID uuid.UUID `gorm:"type:uuid;not null" json:"proposal_id"` // Room ID — proposal ID or direct conversation ID
 	SenderID   uuid.UUID `gorm:"type:uuid;not null" json:"sender_id"`
 	Content    string    `json:"content"`
 	ImageURL   string    `json:"image_url"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+// DirectConversation stores a brand↔creator 1-on-1 chat outside of any proposal
+type DirectConversation struct {
+	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	User1ID   uuid.UUID `gorm:"type:uuid;not null;index" json:"user1_id"`
+	User2ID   uuid.UUID `gorm:"type:uuid;not null;index" json:"user2_id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type SubscriptionPlan struct {

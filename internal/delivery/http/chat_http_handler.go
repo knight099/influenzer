@@ -17,10 +17,11 @@ type ChatHTTPHandler struct {
 func NewChatHTTPHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFunc) {
 	handler := &ChatHTTPHandler{db: db}
 
-	g := r.Group("/conversations") // or /chat per spec? Spec says /conversations
+	g := r.Group("/conversations")
 	g.Use(authMiddleware)
 	{
 		g.GET("", handler.ListConversations)
+		g.POST("", handler.GetOrCreateConversation)
 		g.GET("/:id/messages", handler.GetHistory)
 		g.POST("/:id/messages", handler.SendMessage)
 	}
@@ -110,12 +111,84 @@ func (h *ChatHTTPHandler) ListConversations(c *gin.Context) {
 		}
 	}
 
+	// Append direct conversations for this user
+	var directConvs []domain.DirectConversation
+	h.db.Where("user1_id = ? OR user2_id = ?", userID, userID).Find(&directConvs)
+	for _, dc := range directConvs {
+		otherID := dc.User2ID
+		if dc.User2ID == userID {
+			otherID = dc.User1ID
+		}
+		var other domain.User
+		h.db.Where("id = ?", otherID).First(&other)
+
+		var lastMsg domain.Message
+		h.db.Where("proposal_id = ?", dc.ID).Order("created_at DESC").First(&lastMsg)
+
+		conversations = append(conversations, gin.H{
+			"id":           dc.ID,
+			"user":         other.Name,
+			"user_id":      other.ID,
+			"avatar_url":   other.AvatarURL,
+			"last_message": lastMsg.Content,
+			"updated_at":   lastMsg.CreatedAt,
+		})
+	}
+
 	// Return empty array if no conversations
 	if conversations == nil {
 		conversations = []gin.H{}
 	}
 
 	c.JSON(http.StatusOK, conversations)
+}
+
+type getOrCreateConversationRequest struct {
+	RecipientID string `json:"recipient_id" binding:"required"`
+}
+
+func (h *ChatHTTPHandler) GetOrCreateConversation(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userID, _ := uuid.Parse(userIDVal.(string))
+
+	var req getOrCreateConversationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	recipientID, err := uuid.Parse(req.RecipientID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid recipient_id"})
+		return
+	}
+
+	// Find existing direct conversation (check both orderings)
+	var existing domain.DirectConversation
+	err = h.db.Where(
+		"(user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?)",
+		userID, recipientID, recipientID, userID,
+	).First(&existing).Error
+
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{"id": existing.ID})
+		return
+	}
+
+	// Create new direct conversation
+	conv := domain.DirectConversation{
+		User1ID: userID,
+		User2ID: recipientID,
+	}
+	if err := h.db.Create(&conv).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"id": conv.ID})
 }
 
 func (h *ChatHTTPHandler) GetHistory(c *gin.Context) {
