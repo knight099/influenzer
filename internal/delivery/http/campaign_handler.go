@@ -29,6 +29,7 @@ func NewCampaignHandler(r *gin.Engine, s domain.CampaignService, authMiddleware 
 		g.GET("/my", handler.ListMy)
 		g.GET("/invitations", handler.GetInvitations)
 		g.POST("/:id/invite", handler.InviteCreator)
+		g.PATCH("/:id/close", handler.Close)
 	}
 }
 
@@ -228,4 +229,30 @@ func (h *CampaignHandler) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, campaigns)
+}
+
+// Close marks a campaign as CLOSED. Only the owning brand may do this.
+func (h *CampaignHandler) Close(c *gin.Context) {
+	brandID := mustUserID(c)
+
+	campaignID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid campaign ID"})
+		return
+	}
+
+	result := h.db.Model(&domain.Campaign{}).
+		Where("id = ? AND brand_id = ?", campaignID, brandID).
+		Update("status", domain.CampaignStatusClosed)
+
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Campaign not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Campaign closed"})
 }
