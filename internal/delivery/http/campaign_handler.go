@@ -144,6 +144,13 @@ func (h *CampaignHandler) InviteCreator(c *gin.Context) {
 		return
 	}
 
+	// Block invite if creator has already applied to this campaign
+	var existing domain.Proposal
+	if err := h.db.Where("campaign_id = ? AND creator_id = ?", campaignID, creatorID).First(&existing).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Creator has already applied to this campaign"})
+		return
+	}
+
 	// Get brand name for notification body
 	var brandProfile domain.BrandProfile
 	brandName := "A brand"
