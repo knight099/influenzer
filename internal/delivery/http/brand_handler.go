@@ -1,7 +1,10 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -9,6 +12,23 @@ import (
 	"github.com/vaibhaw/influenzer-backend/pkg/utils"
 	"gorm.io/gorm"
 )
+
+// logoURLFromWebsite derives a Clearbit logo URL from a website string.
+// Returns empty string if website is empty or unparseable.
+func logoURLFromWebsite(website string) string {
+	if website == "" {
+		return ""
+	}
+	if !strings.HasPrefix(website, "http://") && !strings.HasPrefix(website, "https://") {
+		website = "https://" + website
+	}
+	u, err := url.Parse(website)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	domain := strings.TrimPrefix(u.Host, "www.")
+	return fmt.Sprintf("https://logo.clearbit.com/%s", domain)
+}
 
 type BrandHandler struct {
 	db *gorm.DB
@@ -65,6 +85,8 @@ func (h *BrandHandler) UpdateProfile(c *gin.Context) {
 	var profile domain.BrandProfile
 	err := h.db.Where("user_id = ?", userID).First(&profile).Error
 
+	logoURL := logoURLFromWebsite(req.Website)
+
 	if err == gorm.ErrRecordNotFound {
 		// Create new profile
 		profile = domain.BrandProfile{
@@ -74,6 +96,7 @@ func (h *BrandHandler) UpdateProfile(c *gin.Context) {
 			Phone:         req.Phone,
 			RoleInCompany: req.RoleInCompany,
 			Website:       req.Website,
+			LogoURL:       logoURL,
 		}
 		if err := h.db.Create(&profile).Error; err != nil {
 			utils.Logger.Error("Failed to create brand profile: " + err.Error())
@@ -91,6 +114,7 @@ func (h *BrandHandler) UpdateProfile(c *gin.Context) {
 		profile.Phone = req.Phone
 		profile.RoleInCompany = req.RoleInCompany
 		profile.Website = req.Website
+		profile.LogoURL = logoURL
 
 		if err := h.db.Save(&profile).Error; err != nil {
 			utils.Logger.Error("Failed to update brand profile: " + err.Error())
@@ -154,6 +178,7 @@ func (h *BrandHandler) GetProfile(c *gin.Context) {
 		"role_in_company":  profile.RoleInCompany,
 		"gst_number":       profile.GSTNumber,
 		"website":          profile.Website,
+		"logo_url":         profile.LogoURL,
 		"wallet_balance":   profile.WalletBalance,
 		"updated_at":       profile.UpdatedAt,
 		"has_subscription": hasSubscription,

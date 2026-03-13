@@ -55,6 +55,7 @@ type BrandProfile struct {
 	RoleInCompany string    `json:"role_in_company"`
 	GSTNumber     string    `json:"gst_number"`
 	Website       string    `json:"website"`
+	LogoURL       string    `json:"logo_url"`
 	WalletBalance float64   `gorm:"default:0" json:"wallet_balance"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
