@@ -27,7 +27,7 @@ func logoURLFromWebsite(website string) string {
 		return ""
 	}
 	domain := strings.TrimPrefix(u.Host, "www.")
-	return fmt.Sprintf("https://logo.clearbit.com/%s", domain)
+	return fmt.Sprintf("https://img.logo.dev/%s?token=pk_LsUq4TdcQ3mx-6UhuUlFoQ", domain)
 }
 
 type BrandHandler struct {
