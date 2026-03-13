@@ -8,12 +8,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
+	"gorm.io/gorm"
 )
 
 type ProposalHandler struct {
 	service      domain.ProposalService
 	notifSvc     domain.NotificationService
 	campaignRepo domain.CampaignRepository
+	db           *gorm.DB
 }
 
 func NewProposalHandler(
@@ -22,11 +24,13 @@ func NewProposalHandler(
 	authMiddleware gin.HandlerFunc,
 	notifSvc domain.NotificationService,
 	campaignRepo domain.CampaignRepository,
+	db *gorm.DB,
 ) {
 	handler := &ProposalHandler{
 		service:      s,
 		notifSvc:     notifSvc,
 		campaignRepo: campaignRepo,
+		db:           db,
 	}
 
 	g := r.Group("/proposals")
@@ -62,6 +66,13 @@ func (h *ProposalHandler) Create(c *gin.Context) {
 	campaignID, err := uuid.Parse(req.CampaignID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Campaign ID"})
+		return
+	}
+
+	// Block duplicate proposal
+	var existing domain.Proposal
+	if h.db.Where("campaign_id = ? AND creator_id = ?", campaignID, creatorID).First(&existing).Error == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "You have already submitted a proposal for this campaign"})
 		return
 	}
 
@@ -106,7 +117,52 @@ func (h *ProposalHandler) GetByCampaignID(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, proposals)
+	type enrichedProposal struct {
+		domain.Proposal
+		CreatorName      string  `json:"creator_name"`
+		CreatorFollowers int64   `json:"creator_followers"`
+		CreatorAvatar    string  `json:"creator_avatar"`
+	}
+
+	result := make([]enrichedProposal, 0, len(proposals))
+	for _, p := range proposals {
+		ep := enrichedProposal{Proposal: p}
+
+		// Fetch creator user + profile
+		var creator domain.User
+		if h.db.Preload("CreatorProfile").First(&creator, "id = ?", p.CreatorID).Error == nil {
+			ep.CreatorName = creator.Name
+			ep.CreatorAvatar = creator.AvatarURL
+			if creator.CreatorProfile != nil {
+				stats := creator.CreatorProfile.CachedStats
+				if ig, ok := stats["instagram"].(map[string]interface{}); ok {
+					if f, ok := ig["followers_count"]; ok {
+						switch v := f.(type) {
+						case float64:
+							ep.CreatorFollowers = int64(v)
+						case int64:
+							ep.CreatorFollowers = v
+						}
+					}
+				}
+				if ep.CreatorFollowers == 0 {
+					if yt, ok := stats["youtube"].(map[string]interface{}); ok {
+						if s, ok := yt["subscriber_count"]; ok {
+							switch v := s.(type) {
+							case float64:
+								ep.CreatorFollowers = int64(v)
+							case int64:
+								ep.CreatorFollowers = v
+							}
+						}
+					}
+				}
+			}
+		}
+		result = append(result, ep)
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 type updateStatusRequest struct {

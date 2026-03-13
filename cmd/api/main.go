@@ -86,7 +86,7 @@ func main() {
 	notifService := service.NewNotificationService(notifRepo)
 	httpDelivery.NewNotificationHandler(r, notifService, authMiddleware)
 	httpDelivery.NewCampaignHandler(r, campaignService, authMiddleware, notifService, database.DB)
-	httpDelivery.NewProposalHandler(r, proposalService, authMiddleware, notifService, campaignRepo)
+	httpDelivery.NewProposalHandler(r, proposalService, authMiddleware, notifService, campaignRepo, database.DB)
 
 	// - Payments
 	rzpClient := razorpay.NewRazorpayClient(&cfg)
