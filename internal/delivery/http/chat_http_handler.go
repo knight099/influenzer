@@ -135,12 +135,36 @@ func (h *ChatHTTPHandler) ListConversations(c *gin.Context) {
 		})
 	}
 
-	// Return empty array if no conversations
-	if conversations == nil {
-		conversations = []gin.H{}
+	// Deduplicate by user_id, keeping the most recent conversation per user
+	seen := map[string]bool{}
+	deduped := []gin.H{}
+	// Sort by updated_at descending so we keep the most recent
+	for i := 0; i < len(conversations); i++ {
+		for j := i + 1; j < len(conversations); j++ {
+			ti, _ := conversations[i]["updated_at"].(time.Time)
+			tj, _ := conversations[j]["updated_at"].(time.Time)
+			if tj.After(ti) {
+				conversations[i], conversations[j] = conversations[j], conversations[i]
+			}
+		}
+	}
+	for _, conv := range conversations {
+		uid := ""
+		if id, ok := conv["user_id"].(uuid.UUID); ok {
+			uid = id.String()
+		}
+		if uid != "" && seen[uid] {
+			continue
+		}
+		seen[uid] = true
+		deduped = append(deduped, conv)
 	}
 
-	c.JSON(http.StatusOK, conversations)
+	if deduped == nil {
+		deduped = []gin.H{}
+	}
+
+	c.JSON(http.StatusOK, deduped)
 }
 
 type getOrCreateConversationRequest struct {
