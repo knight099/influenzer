@@ -151,6 +151,13 @@ func (h *CampaignHandler) InviteCreator(c *gin.Context) {
 		return
 	}
 
+	// Block invite if creator was already invited to this campaign
+	var existingInvite domain.Notification
+	if err := h.db.Where("user_id = ? AND type = ? AND resource_id = ?", creatorID, domain.NotifCampaignInvite, campaignID.String()).First(&existingInvite).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Creator has already been invited to this campaign"})
+		return
+	}
+
 	// Get brand name for notification body
 	var brandProfile domain.BrandProfile
 	brandName := "A brand"
@@ -190,6 +197,11 @@ func (h *CampaignHandler) GetInvitations(c *gin.Context) {
 	for _, n := range notifications {
 		campaignID, err := uuid.Parse(n.ResourceID)
 		if err != nil {
+			continue
+		}
+		// Skip if the creator has already applied to this campaign
+		var applied domain.Proposal
+		if h.db.Where("campaign_id = ? AND creator_id = ?", campaignID, creatorID).First(&applied).Error == nil {
 			continue
 		}
 		var campaign domain.Campaign
