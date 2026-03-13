@@ -195,10 +195,12 @@ type NotificationRepository interface {
 	GetDeviceTokens(userID uuid.UUID) ([]string, error)
 	SaveDeviceToken(token *DeviceToken) error
 	DeleteDeviceToken(userID uuid.UUID, token string) error
+	GetAllCreatorIDs() ([]uuid.UUID, error)
 }
 
 type NotificationService interface {
 	Notify(userID uuid.UUID, nType NotificationType, title, body, resourceID string)
+	NotifyAllCreators(nType NotificationType, title, body, resourceID string)
 	List(userID uuid.UUID) ([]Notification, error)
 	MarkRead(id string, userID uuid.UUID) error
 	MarkAllRead(userID uuid.UUID) error

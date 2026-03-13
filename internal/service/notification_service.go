@@ -51,6 +51,19 @@ func (s *notificationService) Notify(userID uuid.UUID, nType domain.Notification
 	}()
 }
 
+// NotifyAllCreators sends a notification to every creator — fire-and-forget.
+func (s *notificationService) NotifyAllCreators(nType domain.NotificationType, title, body, resourceID string) {
+	go func() {
+		ids, err := s.repo.GetAllCreatorIDs()
+		if err != nil || len(ids) == 0 {
+			return
+		}
+		for _, id := range ids {
+			s.Notify(id, nType, title, body, resourceID)
+		}
+	}()
+}
+
 func (s *notificationService) List(userID uuid.UUID) ([]domain.Notification, error) {
 	return s.repo.ListByUserID(userID, 50)
 }

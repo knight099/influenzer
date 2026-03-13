@@ -73,3 +73,11 @@ func (r *notificationRepository) DeleteDeviceToken(userID uuid.UUID, token strin
 	return r.db.Where("user_id = ? AND token = ?", userID, token).
 		Delete(&domain.DeviceToken{}).Error
 }
+
+func (r *notificationRepository) GetAllCreatorIDs() ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	err := r.db.Model(&domain.User{}).
+		Where("role = ?", domain.RoleCreator).
+		Pluck("id", &ids).Error
+	return ids, err
+}

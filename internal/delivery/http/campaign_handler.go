@@ -1,20 +1,24 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
+	"gorm.io/gorm"
 )
 
 type CampaignHandler struct {
-	service domain.CampaignService
+	service      domain.CampaignService
+	notifService domain.NotificationService
+	db           *gorm.DB
 }
 
-func NewCampaignHandler(r *gin.Engine, s domain.CampaignService, authMiddleware gin.HandlerFunc) {
-	handler := &CampaignHandler{service: s}
+func NewCampaignHandler(r *gin.Engine, s domain.CampaignService, authMiddleware gin.HandlerFunc, notifService domain.NotificationService, db *gorm.DB) {
+	handler := &CampaignHandler{service: s, notifService: notifService, db: db}
 
 	g := r.Group("/campaigns")
 	g.Use(authMiddleware) // Protect these routes
@@ -63,6 +67,19 @@ func (h *CampaignHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Notify all creators about the new campaign
+	var brandProfile domain.BrandProfile
+	brandName := "A brand"
+	if err := h.db.Where("user_id = ?", brandID).First(&brandProfile).Error; err == nil && brandProfile.CompanyName != "" {
+		brandName = brandProfile.CompanyName
+	}
+	h.notifService.NotifyAllCreators(
+		domain.NotifCampaignCreated,
+		"New Campaign Posted",
+		fmt.Sprintf("%s posted a new campaign", brandName),
+		campaign.ID.String(),
+	)
 
 	// Response format per spec: { "id": "123", ... }
 	c.JSON(http.StatusCreated, campaign)

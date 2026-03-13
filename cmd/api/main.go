@@ -77,7 +77,6 @@ func main() {
 	// - Marketplace
 	campaignRepo := repository.NewCampaignRepository(database.DB)
 	campaignService := service.NewCampaignService(campaignRepo)
-	httpDelivery.NewCampaignHandler(r, campaignService, authMiddleware)
 
 	proposalRepo := repository.NewProposalRepository(database.DB)
 	proposalService := service.NewProposalService(proposalRepo)
@@ -86,6 +85,7 @@ func main() {
 	notifRepo := repository.NewNotificationRepository(database.DB)
 	notifService := service.NewNotificationService(notifRepo)
 	httpDelivery.NewNotificationHandler(r, notifService, authMiddleware)
+	httpDelivery.NewCampaignHandler(r, campaignService, authMiddleware, notifService, database.DB)
 	httpDelivery.NewProposalHandler(r, proposalService, authMiddleware, notifService, campaignRepo)
 
 	// - Payments
