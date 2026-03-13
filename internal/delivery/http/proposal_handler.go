@@ -119,41 +119,58 @@ func (h *ProposalHandler) GetByCampaignID(c *gin.Context) {
 
 	type enrichedProposal struct {
 		domain.Proposal
-		CreatorName      string  `json:"creator_name"`
-		CreatorFollowers int64   `json:"creator_followers"`
-		CreatorAvatar    string  `json:"creator_avatar"`
+		CreatorName           string      `json:"creator_name"`
+		CreatorAvatar         string      `json:"creator_avatar"`
+		InstagramUsername     string      `json:"instagram_username"`
+		InstagramURL          string      `json:"instagram_url"`
+		InstagramFollowers    interface{} `json:"instagram_followers"`
+		InstagramMediaCount   interface{} `json:"instagram_media_count"`
+		YoutubeChannelTitle   string      `json:"youtube_channel_title"`
+		YoutubeURL            string      `json:"youtube_url"`
+		YoutubeSubscribers    interface{} `json:"youtube_subscribers"`
+		YoutubeVideoCount     interface{} `json:"youtube_video_count"`
 	}
 
 	result := make([]enrichedProposal, 0, len(proposals))
 	for _, p := range proposals {
 		ep := enrichedProposal{Proposal: p}
 
-		// Fetch creator user + profile
 		var creator domain.User
 		if h.db.Preload("CreatorProfile").First(&creator, "id = ?", p.CreatorID).Error == nil {
 			ep.CreatorName = creator.Name
 			ep.CreatorAvatar = creator.AvatarURL
+
 			if creator.CreatorProfile != nil {
 				stats := creator.CreatorProfile.CachedStats
+
 				if ig, ok := stats["instagram"].(map[string]interface{}); ok {
-					if f, ok := ig["followers_count"]; ok {
-						switch v := f.(type) {
-						case float64:
-							ep.CreatorFollowers = int64(v)
-						case int64:
-							ep.CreatorFollowers = v
+					if u, ok := ig["username"].(string); ok && u != "" {
+						ep.InstagramUsername = u
+						ep.InstagramURL = "https://instagram.com/" + u
+					}
+					ep.InstagramFollowers = ig["followers_count"]
+					ep.InstagramMediaCount = ig["media_count"]
+					// Use instagram profile_picture as avatar fallback
+					if ep.CreatorAvatar == "" {
+						if pic, ok := ig["profile_picture"].(string); ok {
+							ep.CreatorAvatar = pic
 						}
 					}
 				}
-				if ep.CreatorFollowers == 0 {
-					if yt, ok := stats["youtube"].(map[string]interface{}); ok {
-						if s, ok := yt["subscriber_count"]; ok {
-							switch v := s.(type) {
-							case float64:
-								ep.CreatorFollowers = int64(v)
-							case int64:
-								ep.CreatorFollowers = v
-							}
+
+				if yt, ok := stats["youtube"].(map[string]interface{}); ok {
+					if t, ok := yt["channel_title"].(string); ok {
+						ep.YoutubeChannelTitle = t
+					}
+					if cu, ok := yt["channel_url"].(string); ok && cu != "" {
+						ep.YoutubeURL = "https://youtube.com/" + cu
+					}
+					ep.YoutubeSubscribers = yt["subscriber_count"]
+					ep.YoutubeVideoCount = yt["video_count"]
+					// Use youtube thumbnail as avatar fallback
+					if ep.CreatorAvatar == "" {
+						if thumb, ok := yt["thumbnail"].(string); ok {
+							ep.CreatorAvatar = thumb
 						}
 					}
 				}
