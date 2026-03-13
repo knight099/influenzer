@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -47,23 +48,21 @@ func (h *ChatHTTPHandler) ListConversations(c *gin.Context) {
 	var conversations []gin.H
 
 	if user.Role == domain.RoleCreator {
-		// Creator: Get proposals where they are the creator
 		if err := h.db.Preload("Campaign").Where("creator_id = ?", userID).Find(&proposals).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
 		for _, p := range proposals {
-			// Get brand info
 			var brand domain.User
 			h.db.Where("id = ?", p.Campaign.BrandID).First(&brand)
 
-			// Get last message
 			var lastMsg domain.Message
 			h.db.Where("proposal_id = ?", p.ID).Order("created_at DESC").First(&lastMsg)
 
 			conversations = append(conversations, gin.H{
 				"id":           p.ID,
+				"type":         "proposal",
 				"user":         brand.Name,
 				"user_id":      brand.ID,
 				"avatar_url":   brand.AvatarURL,
@@ -72,7 +71,6 @@ func (h *ChatHTTPHandler) ListConversations(c *gin.Context) {
 			})
 		}
 	} else if user.Role == domain.RoleBrand {
-		// Brand: Get proposals for campaigns they own
 		var campaigns []domain.Campaign
 		if err := h.db.Where("brand_id = ?", userID).Find(&campaigns).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -92,16 +90,15 @@ func (h *ChatHTTPHandler) ListConversations(c *gin.Context) {
 		}
 
 		for _, p := range proposals {
-			// Get creator info
 			var creator domain.User
 			h.db.Where("id = ?", p.CreatorID).First(&creator)
 
-			// Get last message
 			var lastMsg domain.Message
 			h.db.Where("proposal_id = ?", p.ID).Order("created_at DESC").First(&lastMsg)
 
 			conversations = append(conversations, gin.H{
 				"id":           p.ID,
+				"type":         "proposal",
 				"user":         creator.Name,
 				"user_id":      creator.ID,
 				"avatar_url":   creator.AvatarURL,
@@ -127,6 +124,7 @@ func (h *ChatHTTPHandler) ListConversations(c *gin.Context) {
 
 		conversations = append(conversations, gin.H{
 			"id":           dc.ID,
+			"type":         "direct",
 			"user":         other.Name,
 			"user_id":      other.ID,
 			"avatar_url":   other.AvatarURL,
@@ -135,19 +133,22 @@ func (h *ChatHTTPHandler) ListConversations(c *gin.Context) {
 		})
 	}
 
-	// Deduplicate by user_id, keeping the most recent conversation per user
+	// Sort: proposal rooms before direct rooms; within same type, newer updated_at first.
+	// This ensures that when deduplicating by user_id, proposal rooms (with full history) win.
+	sort.Slice(conversations, func(i, j int) bool {
+		ti := conversations[i]["type"].(string)
+		tj := conversations[j]["type"].(string)
+		if ti != tj {
+			return ti == "proposal" // proposal always beats direct
+		}
+		tsI, _ := conversations[i]["updated_at"].(time.Time)
+		tsJ, _ := conversations[j]["updated_at"].(time.Time)
+		return tsI.After(tsJ)
+	})
+
+	// Deduplicate by user_id — first occurrence wins (= proposal > newer direct)
 	seen := map[string]bool{}
 	deduped := []gin.H{}
-	// Sort by updated_at descending so we keep the most recent
-	for i := 0; i < len(conversations); i++ {
-		for j := i + 1; j < len(conversations); j++ {
-			ti, _ := conversations[i]["updated_at"].(time.Time)
-			tj, _ := conversations[j]["updated_at"].(time.Time)
-			if tj.After(ti) {
-				conversations[i], conversations[j] = conversations[j], conversations[i]
-			}
-		}
-	}
 	for _, conv := range conversations {
 		uid := ""
 		if id, ok := conv["user_id"].(uuid.UUID); ok {
@@ -190,7 +191,23 @@ func (h *ChatHTTPHandler) GetOrCreateConversation(c *gin.Context) {
 		return
 	}
 
-	// Find existing direct conversation (check both orderings)
+	// 1. Check for an existing proposal between these two users (brand↔creator).
+	//    Return the proposal room so existing message history is preserved.
+	var proposal domain.Proposal
+	err = h.db.
+		Joins("JOIN campaigns ON proposals.campaign_id = campaigns.id").
+		Where(
+			"(proposals.creator_id = ? AND campaigns.brand_id = ?) OR (proposals.creator_id = ? AND campaigns.brand_id = ?)",
+			recipientID, userID, userID, recipientID,
+		).
+		Order("proposals.updated_at DESC").
+		First(&proposal).Error
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{"id": proposal.ID})
+		return
+	}
+
+	// 2. Check for an existing direct conversation (check both orderings)
 	var existing domain.DirectConversation
 	err = h.db.Where(
 		"(user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?)",
@@ -202,7 +219,7 @@ func (h *ChatHTTPHandler) GetOrCreateConversation(c *gin.Context) {
 		return
 	}
 
-	// Create new direct conversation
+	// 3. Create new direct conversation
 	conv := domain.DirectConversation{
 		User1ID: userID,
 		User2ID: recipientID,
@@ -224,7 +241,6 @@ func (h *ChatHTTPHandler) GetHistory(c *gin.Context) {
 		return
 	}
 
-	// Map to Spec: { "text": "...", "sender_id": "..." }
 	var response []map[string]interface{}
 	for _, m := range messages {
 		response = append(response, map[string]interface{}{
@@ -262,7 +278,7 @@ func (h *ChatHTTPHandler) SendMessage(c *gin.Context) {
 		SenderID:   senderID,
 		Content:    req.Text,
 		ImageURL:   req.AttachmentURL,
-		CreatedAt:  time.Now(), // GORM handles too usually
+		CreatedAt:  time.Now(),
 	}
 
 	if err := h.db.Create(&msg).Error; err != nil {
