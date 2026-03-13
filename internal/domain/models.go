@@ -173,6 +173,7 @@ const (
 	NotifNewMessage       NotificationType = "NEW_MESSAGE"
 	NotifCampaignCreated  NotificationType = "CAMPAIGN_CREATED"
 	NotifPaymentReceived  NotificationType = "PAYMENT_RECEIVED"
+	NotifCampaignInvite   NotificationType = "CAMPAIGN_INVITE"
 )
 
 type Notification struct {
