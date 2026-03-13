@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -26,6 +27,7 @@ func NewCampaignHandler(r *gin.Engine, s domain.CampaignService, authMiddleware 
 		g.POST("", handler.Create)
 		g.GET("", handler.List)
 		g.GET("/my", handler.ListMy)
+		g.GET("/invitations", handler.GetInvitations)
 		g.POST("/:id/invite", handler.InviteCreator)
 	}
 }
@@ -158,6 +160,39 @@ func (h *CampaignHandler) InviteCreator(c *gin.Context) {
 	)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Invitation sent"})
+}
+
+// GetInvitations returns campaigns the authenticated creator has been invited to.
+func (h *CampaignHandler) GetInvitations(c *gin.Context) {
+	creatorID := mustUserID(c)
+
+	var notifications []domain.Notification
+	if err := h.db.Where("user_id = ? AND type = ?", creatorID, domain.NotifCampaignInvite).
+		Order("created_at DESC").
+		Find(&notifications).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	type InvitedCampaign struct {
+		domain.Campaign
+		InvitedAt time.Time `json:"invited_at"`
+	}
+
+	result := make([]InvitedCampaign, 0, len(notifications))
+	for _, n := range notifications {
+		campaignID, err := uuid.Parse(n.ResourceID)
+		if err != nil {
+			continue
+		}
+		var campaign domain.Campaign
+		if err := h.db.Where("id = ?", campaignID).First(&campaign).Error; err != nil {
+			continue
+		}
+		result = append(result, InvitedCampaign{Campaign: campaign, InvitedAt: n.CreatedAt})
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *CampaignHandler) List(c *gin.Context) {
