@@ -313,6 +313,20 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 		h.db.Save(user.CreatorProfile)
 	}
 
+	// Sync best available avatar into User.AvatarURL so chat list and other
+	// places that use User.AvatarURL show the same picture as the creator profile.
+	if igData, ok := stats["instagram"].(map[string]interface{}); ok {
+		if pic, ok := igData["profile_picture"].(string); ok && pic != "" {
+			user.AvatarURL = pic
+			h.db.Model(&user).Update("avatar_url", pic)
+		}
+	} else if ytData, ok := stats["youtube"].(map[string]interface{}); ok {
+		if thumb, ok := ytData["thumbnail"].(string); ok && thumb != "" {
+			user.AvatarURL = thumb
+			h.db.Model(&user).Update("avatar_url", thumb)
+		}
+	}
+
 	// Check if reconnection is needed for any platform
 	instagramNeedsReconnect := false
 	youtubeNeedsReconnect := false
