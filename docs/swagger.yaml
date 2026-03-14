@@ -1,4 +1,517 @@
+definitions:
+  domain.Campaign:
+    properties:
+      brand_id:
+        type: string
+      budget:
+        type: number
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      platform:
+        description: e.g. "instagram", "youtube"
+        type: string
+      requirements:
+        additionalProperties: true
+        type: object
+      status:
+        $ref: '#/definitions/domain.CampaignStatus'
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  domain.CampaignStatus:
+    enum:
+    - OPEN
+    - CLOSED
+    type: string
+    x-enum-varnames:
+    - CampaignStatusOpen
+    - CampaignStatusClosed
+  domain.Proposal:
+    properties:
+      bid_amount:
+        type: number
+      campaign:
+        $ref: '#/definitions/domain.Campaign'
+      campaign_id:
+        type: string
+      cover_note:
+        type: string
+      created_at:
+        type: string
+      creator_id:
+        type: string
+      id:
+        type: string
+      proof_url:
+        type: string
+      razorpay_order_id:
+        type: string
+      razorpay_payment_id:
+        type: string
+      status:
+        $ref: '#/definitions/domain.ProposalStatus'
+      trial_video_url:
+        description: or just video_url
+        type: string
+      updated_at:
+        type: string
+    type: object
+  domain.ProposalStatus:
+    enum:
+    - APPLIED
+    - APPROVED
+    - FUNDED
+    - SUBMITTED
+    - COMPLETED
+    - PAID
+    type: string
+    x-enum-varnames:
+    - ProposalStatusApplied
+    - ProposalStatusApproved
+    - ProposalStatusFunded
+    - ProposalStatusSubmitted
+    - ProposalStatusCompleted
+    - ProposalStatusPaid
+  domain.Role:
+    enum:
+    - BRAND
+    - CREATOR
+    type: string
+    x-enum-varnames:
+    - RoleBrand
+    - RoleCreator
+  http.applyRequest:
+    properties:
+      bid_amount:
+        type: number
+      cover_letter:
+        type: string
+      video_url:
+        type: string
+    type: object
+  http.connectSocialRequest:
+    properties:
+      auth_code:
+        type: string
+      platform:
+        type: string
+    required:
+    - auth_code
+    - platform
+    type: object
+  http.emailLoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  http.registerRequest:
+    properties:
+      email:
+        type: string
+      password:
+        minLength: 6
+        type: string
+      role:
+        $ref: '#/definitions/domain.Role'
+    required:
+    - email
+    - password
+    - role
+    type: object
+  http.setRoleRequest:
+    properties:
+      role:
+        $ref: '#/definitions/domain.Role'
+    required:
+    - role
+    type: object
+  http.socialLoginRequest:
+    properties:
+      avatar_url:
+        description: 'Optional: avatar URL from frontend'
+        type: string
+      name:
+        description: 'Optional: display name from frontend'
+        type: string
+      provider:
+        description: google, facebook
+        type: string
+      token:
+        type: string
+    required:
+    - provider
+    - token
+    type: object
+  http.updateBrandProfileRequest:
+    properties:
+      brand_name:
+        type: string
+      contact_name:
+        type: string
+      phone:
+        type: string
+      role_in_company:
+        type: string
+      website:
+        type: string
+    type: object
 info:
   contact: {}
-paths: {}
+paths:
+  /api/brands/profile:
+    get:
+      description: Retrieve the brand profile for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: profile details
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get Brand Profile
+      tags:
+      - brands
+    put:
+      consumes:
+      - application/json
+      description: Create or update the brand profile for the authenticated user
+      parameters:
+      - description: Brand Profile Details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.updateBrandProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: success and profile
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update Brand Profile
+      tags:
+      - brands
+  /auth/connect-social:
+    post:
+      consumes:
+      - application/json
+      description: Connect an Instagram or YouTube account
+      parameters:
+      - description: Social Platform details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.connectSocialRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: success status
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Connect Social Account
+      tags:
+      - auth
+  /auth/login/email:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate a user with email and password
+      parameters:
+      - description: Email Login Credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.emailLoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: access_token and user object
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Email Login
+      tags:
+      - auth
+  /auth/login/social:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate a user via Google OAuth token
+      parameters:
+      - description: Social Login Details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.socialLoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: access_token and user object
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Social Login (Google)
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Register a new user with email and password
+      parameters:
+      - description: Registration Details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.registerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: access_token and user object
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Register
+      tags:
+      - auth
+  /auth/set-role:
+    post:
+      consumes:
+      - application/json
+      description: Set the user role to either BRAND or CREATOR
+      parameters:
+      - description: Role Designation
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.setRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: success and new role
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set User Role
+      tags:
+      - auth
+  /jobs/{id}/apply:
+    post:
+      consumes:
+      - application/json
+      description: Submit a proposal to a campaign
+      parameters:
+      - description: Campaign ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Application Details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.applyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: proposal_id
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Apply to a Job
+      tags:
+      - jobs
+  /jobs/feed:
+    get:
+      description: Retrieve a list of open campaigns (job feed)
+      parameters:
+      - description: Filter by niche
+        in: query
+        name: niche
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of campaigns
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Get Job Feed
+      tags:
+      - jobs
+  /jobs/my-applications:
+    get:
+      description: Retrieve a list of proposals submitted by the authenticated creator
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of proposals
+          schema:
+            items:
+              $ref: '#/definitions/domain.Proposal'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Get My Applications
+      tags:
+      - jobs
+  /upload/presigned:
+    post:
+      description: Get a mock presigned URL for file uploads
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: upload_url and public_url
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get Presigned URL
+      tags:
+      - upload
 swagger: "2.0"

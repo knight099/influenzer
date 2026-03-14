@@ -54,6 +54,21 @@ type updateBrandProfileRequest struct {
 	Website       string `json:"website"`
 }
 
+// UpdateProfile godoc
+// @Summary Update Brand Profile
+// @Description Create or update the brand profile for the authenticated user
+// @Tags brands
+// @Accept json
+// @Produce json
+// @Param request body updateBrandProfileRequest true "Brand Profile Details"
+// @Success 200 {object} map[string]interface{} "success and profile"
+// @Failure 400 {object} map[string]interface{} "error"
+// @Failure 401 {object} map[string]interface{} "error"
+// @Failure 403 {object} map[string]interface{} "error"
+// @Failure 404 {object} map[string]interface{} "error"
+// @Failure 500 {object} map[string]interface{} "error"
+// @Security BearerAuth
+// @Router /api/brands/profile [put]
 // UpdateProfile updates or creates the brand profile for the authenticated user
 func (h *BrandHandler) UpdateProfile(c *gin.Context) {
 	userID, exists := c.Get("userID")
@@ -129,6 +144,17 @@ func (h *BrandHandler) UpdateProfile(c *gin.Context) {
 	})
 }
 
+// GetProfile godoc
+// @Summary Get Brand Profile
+// @Description Retrieve the brand profile for the authenticated user
+// @Tags brands
+// @Produce json
+// @Success 200 {object} map[string]interface{} "profile details"
+// @Failure 401 {object} map[string]interface{} "error"
+// @Failure 404 {object} map[string]interface{} "error"
+// @Failure 500 {object} map[string]interface{} "error"
+// @Security BearerAuth
+// @Router /api/brands/profile [get]
 // GetProfile retrieves the brand profile for the authenticated user
 func (h *BrandHandler) GetProfile(c *gin.Context) {
 	userID, exists := c.Get("userID")

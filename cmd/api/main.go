@@ -107,7 +107,7 @@ func main() {
 	wsDelivery.NewChatHandler(r, database.DB, cfg.JWTSecret)
 
 	// - Swagger
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	r.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Log all registered routes
 	utils.Logger.Info("Registered Routes:")

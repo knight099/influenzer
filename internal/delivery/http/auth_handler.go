@@ -50,6 +50,17 @@ type socialLoginRequest struct {
 	AvatarURL string `json:"avatar_url"` // Optional: avatar URL from frontend
 }
 
+// SocialLogin godoc
+// @Summary Social Login (Google)
+// @Description Authenticate a user via Google OAuth token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body socialLoginRequest true "Social Login Details"
+// @Success 200 {object} map[string]interface{} "access_token and user object"
+// @Failure 400 {object} map[string]interface{} "error"
+// @Failure 401 {object} map[string]interface{} "error"
+// @Router /auth/login/social [post]
 func (h *AuthHandler) SocialLogin(c *gin.Context) {
 	var req socialLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -84,6 +95,17 @@ type emailLoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+// EmailLogin godoc
+// @Summary Email Login
+// @Description Authenticate a user with email and password
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body emailLoginRequest true "Email Login Credentials"
+// @Success 200 {object} map[string]interface{} "access_token and user object"
+// @Failure 400 {object} map[string]interface{} "error"
+// @Failure 401 {object} map[string]interface{} "error"
+// @Router /auth/login/email [post]
 func (h *AuthHandler) EmailLogin(c *gin.Context) {
 	var req emailLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -106,6 +128,16 @@ type registerRequest struct {
 	Role     domain.Role `json:"role" binding:"required"`
 }
 
+// Register godoc
+// @Summary Register
+// @Description Register a new user with email and password
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body registerRequest true "Registration Details"
+// @Success 200 {object} map[string]interface{} "access_token and user object"
+// @Failure 400 {object} map[string]interface{} "error"
+// @Router /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -135,6 +167,18 @@ type connectSocialRequest struct {
 	AuthCode string `json:"auth_code" binding:"required"`
 }
 
+// ConnectSocial godoc
+// @Summary Connect Social Account
+// @Description Connect an Instagram or YouTube account
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body connectSocialRequest true "Social Platform details"
+// @Success 200 {object} map[string]interface{} "success status"
+// @Failure 400 {object} map[string]interface{} "error"
+// @Failure 401 {object} map[string]interface{} "error"
+// @Security BearerAuth
+// @Router /auth/connect-social [post]
 func (h *AuthHandler) ConnectSocial(c *gin.Context) {
 	var req connectSocialRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -163,6 +207,19 @@ type setRoleRequest struct {
 	Role domain.Role `json:"role" binding:"required"`
 }
 
+// SetRole godoc
+// @Summary Set User Role
+// @Description Set the user role to either BRAND or CREATOR
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body setRoleRequest true "Role Designation"
+// @Success 200 {object} map[string]interface{} "success and new role"
+// @Failure 400 {object} map[string]interface{} "error"
+// @Failure 401 {object} map[string]interface{} "error"
+// @Failure 500 {object} map[string]interface{} "error"
+// @Security BearerAuth
+// @Router /auth/set-role [post]
 // SetRole allows authenticated users to set their role (BRAND or CREATOR)
 func (h *AuthHandler) SetRole(c *gin.Context) {
 	var req setRoleRequest

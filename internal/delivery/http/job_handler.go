@@ -27,6 +27,15 @@ func NewJobHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFunc) {
 	r.POST("/upload/presigned", authMiddleware, handler.GetPresignedURL)
 }
 
+// GetFeed godoc
+// @Summary Get Job Feed
+// @Description Retrieve a list of open campaigns (job feed)
+// @Tags jobs
+// @Produce json
+// @Param niche query string false "Filter by niche"
+// @Success 200 {array} map[string]interface{} "List of campaigns"
+// @Security BearerAuth
+// @Router /jobs/feed [get]
 func (h *JobHandler) GetFeed(c *gin.Context) {
 	niche := c.Query("niche")
 	userIDVal, exists := c.Get("userID")
@@ -100,6 +109,19 @@ type applyRequest struct {
 	VideoURL    string  `json:"video_url"`
 }
 
+// Apply godoc
+// @Summary Apply to a Job
+// @Description Submit a proposal to a campaign
+// @Tags jobs
+// @Accept json
+// @Produce json
+// @Param id path string true "Campaign ID"
+// @Param request body applyRequest true "Application Details"
+// @Success 200 {object} map[string]interface{} "proposal_id"
+// @Failure 400 {object} map[string]interface{} "error"
+// @Failure 500 {object} map[string]interface{} "error"
+// @Security BearerAuth
+// @Router /jobs/{id}/apply [post]
 func (h *JobHandler) Apply(c *gin.Context) {
 	campaignIDStr := c.Param("id")
 	campaignID, _ := uuid.Parse(campaignIDStr)
@@ -131,6 +153,14 @@ func (h *JobHandler) Apply(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"proposal_id": proposal.ID})
 }
 
+// MyApplications godoc
+// @Summary Get My Applications
+// @Description Retrieve a list of proposals submitted by the authenticated creator
+// @Tags jobs
+// @Produce json
+// @Success 200 {array} domain.Proposal "List of proposals"
+// @Security BearerAuth
+// @Router /jobs/my-applications [get]
 func (h *JobHandler) MyApplications(c *gin.Context) {
 	userIDVal, _ := c.Get("userID")
 
@@ -140,6 +170,14 @@ func (h *JobHandler) MyApplications(c *gin.Context) {
 	c.JSON(http.StatusOK, proposals)
 }
 
+// GetPresignedURL godoc
+// @Summary Get Presigned URL
+// @Description Get a mock presigned URL for file uploads
+// @Tags upload
+// @Produce json
+// @Success 200 {object} map[string]interface{} "upload_url and public_url"
+// @Security BearerAuth
+// @Router /upload/presigned [post]
 func (h *JobHandler) GetPresignedURL(c *gin.Context) {
 	// Mock Presigned URL
 	// Request: filename, file_type
