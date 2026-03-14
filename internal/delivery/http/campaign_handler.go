@@ -30,6 +30,7 @@ func NewCampaignHandler(r *gin.Engine, s domain.CampaignService, authMiddleware 
 		g.GET("/invitations", handler.GetInvitations)
 		g.POST("/:id/invite", handler.InviteCreator)
 		g.PATCH("/:id/close", handler.Close)
+		g.DELETE("/:id", handler.Delete)
 	}
 }
 
@@ -257,4 +258,33 @@ func (h *CampaignHandler) Close(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Campaign closed"})
+}
+
+// Delete permanently deletes a closed campaign owned by the authenticated brand.
+func (h *CampaignHandler) Delete(c *gin.Context) {
+	brandID := mustUserID(c)
+
+	campaignID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid campaign ID"})
+		return
+	}
+
+	// Only allow deleting CLOSED campaigns
+	var campaign domain.Campaign
+	if err := h.db.Where("id = ? AND brand_id = ?", campaignID, brandID).First(&campaign).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Campaign not found"})
+		return
+	}
+	if campaign.Status != domain.CampaignStatusClosed {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only closed campaigns can be deleted"})
+		return
+	}
+
+	if err := h.db.Delete(&campaign).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Campaign deleted"})
 }
