@@ -24,6 +24,7 @@ func NewCreatorHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFun
 	g.Use(authMiddleware)
 	{
 		g.GET("/search", handler.Search)
+		g.GET("/spotlight", handler.Spotlight)
 		g.GET("/:id", handler.GetProfile)
 	}
 
@@ -136,6 +137,81 @@ func (h *CreatorHandler) Search(c *gin.Context) {
 		response = append(response, creatorData)
 	}
 
+	c.JSON(http.StatusOK, response)
+}
+
+// Spotlight returns up to 8 creators who have connected platforms, ordered by
+// earliest sign-up — giving early adopters guaranteed visibility.
+func (h *CreatorHandler) Spotlight(c *gin.Context) {
+	var creators []domain.CreatorProfile
+
+	h.db.Preload("User").
+		Joins("JOIN users ON users.id = creator_profiles.user_id").
+		Where("creator_profiles.niche != '' AND creator_profiles.cached_stats IS NOT NULL").
+		Order("users.created_at ASC").
+		Limit(8).
+		Find(&creators)
+
+	var response []map[string]interface{}
+	for _, cp := range creators {
+		var instagramUsername, instagramURL string
+		var instagramFollowers interface{}
+		if ig, ok := cp.CachedStats["instagram"].(map[string]interface{}); ok {
+			if u, ok := ig["username"].(string); ok {
+				instagramUsername = u
+				instagramURL = "https://instagram.com/" + u
+			}
+			instagramFollowers = ig["followers_count"]
+		}
+
+		var youtubeChannelID, youtubeChannelTitle, youtubeURL string
+		var youtubeSubscribers interface{}
+		if yt, ok := cp.CachedStats["youtube"].(map[string]interface{}); ok {
+			if cu, ok := yt["channel_url"].(string); ok {
+				youtubeChannelID = cu
+				youtubeURL = "https://youtube.com/" + cu
+			}
+			if t, ok := yt["channel_title"].(string); ok {
+				youtubeChannelTitle = t
+			}
+			youtubeSubscribers = yt["subscriber_count"]
+		}
+
+		avatarURL := cp.User.AvatarURL
+		if cs := cp.CachedStats; cs != nil {
+			if ig, ok := cs["instagram"].(map[string]interface{}); ok {
+				if pic, ok := ig["profile_picture"].(string); ok && pic != "" {
+					avatarURL = pic
+				}
+			} else if yt, ok := cs["youtube"].(map[string]interface{}); ok {
+				if thumb, ok := yt["thumbnail"].(string); ok && thumb != "" && avatarURL == "" {
+					avatarURL = thumb
+				}
+			}
+		}
+
+		response = append(response, map[string]interface{}{
+			"id":                    cp.UserID,
+			"name":                  cp.User.Name,
+			"niche":                 cp.Niche,
+			"min_budget":            cp.MinBudget,
+			"platform":              cp.Platform,
+			"city":                  cp.City,
+			"avatar_url":            avatarURL,
+			"cached_stats":          cp.CachedStats,
+			"instagram_username":    instagramUsername,
+			"instagram_url":         instagramURL,
+			"instagram_followers":   instagramFollowers,
+			"youtube_channel_id":    youtubeChannelID,
+			"youtube_channel_title": youtubeChannelTitle,
+			"youtube_url":           youtubeURL,
+			"youtube_subscribers":   youtubeSubscribers,
+		})
+	}
+
+	if response == nil {
+		response = []map[string]interface{}{}
+	}
 	c.JSON(http.StatusOK, response)
 }
 
