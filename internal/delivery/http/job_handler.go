@@ -42,30 +42,52 @@ func (h *JobHandler) GetFeed(c *gin.Context) {
 
 	query.Find(&campaigns)
 
+	// Collect brand IDs to batch-fetch brand profiles
+	brandIDSet := make(map[uuid.UUID]bool)
+	for _, camp := range campaigns {
+		brandIDSet[camp.BrandID] = true
+	}
+	brandIDs := make([]uuid.UUID, 0, len(brandIDSet))
+	for id := range brandIDSet {
+		brandIDs = append(brandIDs, id)
+	}
+	var brandProfiles []domain.BrandProfile
+	h.db.Where("user_id IN ?", brandIDs).Find(&brandProfiles)
+	brandMap := make(map[uuid.UUID]domain.BrandProfile, len(brandProfiles))
+	for _, bp := range brandProfiles {
+		brandMap[bp.UserID] = bp
+	}
+
 	// Get applied campaign IDs for this user
 	appliedCampaigns := make(map[uuid.UUID]bool)
 	if exists {
-		// Ideally use a service, but direct DB here for now as per handler pattern
 		var proposalCampaignIDs []uuid.UUID
 		h.db.Model(&domain.Proposal{}).
 			Where("creator_id = ?", userIDVal).
 			Pluck("campaign_id", &proposalCampaignIDs)
-
 		for _, id := range proposalCampaignIDs {
 			appliedCampaigns[id] = true
 		}
 	}
 
-	// Map to simplified response
+	// Map to response
 	var response []map[string]interface{}
 	for _, camp := range campaigns {
+		bp := brandMap[camp.BrandID]
+		brandName := bp.CompanyName
+		if brandName == "" {
+			brandName = "Unknown Brand"
+		}
 		response = append(response, map[string]interface{}{
-			"id":          camp.ID,
-			"title":       camp.Title,
-			"description": camp.Description,
-			"budget":      camp.Budget,
-			"platform":    camp.Platform,
-			"applied":     appliedCampaigns[camp.ID],
+			"id":           camp.ID,
+			"title":        camp.Title,
+			"description":  camp.Description,
+			"budget":       camp.Budget,
+			"platform":     camp.Platform,
+			"requirements": camp.Requirements,
+			"brand_name":   brandName,
+			"brand_logo":   bp.LogoURL,
+			"applied":      appliedCampaigns[camp.ID],
 		})
 	}
 
