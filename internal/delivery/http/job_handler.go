@@ -97,6 +97,7 @@ func (h *JobHandler) GetFeed(c *gin.Context) {
 			"brand_name":   brandName,
 			"brand_logo":   bp.LogoURL,
 			"applied":      appliedCampaigns[camp.ID],
+			"created_at":   camp.CreatedAt,
 		})
 	}
 

@@ -34,10 +34,11 @@ func NewCampaignHandler(r *gin.Engine, s domain.CampaignService, authMiddleware 
 }
 
 type createCampaignRequest struct {
-	Title       string  `json:"title" binding:"required"`
-	Description string  `json:"description"`
-	Budget      float64 `json:"budget" binding:"required"`
-	Platform    string  `json:"platform"`
+	Title        string                 `json:"title" binding:"required"`
+	Description  string                 `json:"description"`
+	Budget       float64                `json:"budget" binding:"required"`
+	Platform     string                 `json:"platform"`
+	Requirements map[string]interface{} `json:"requirements"`
 }
 
 func (h *CampaignHandler) Create(c *gin.Context) {
@@ -60,12 +61,13 @@ func (h *CampaignHandler) Create(c *gin.Context) {
 	}
 
 	campaign := &domain.Campaign{
-		BrandID:     brandID,
-		Title:       req.Title,
-		Description: req.Description,
-		Budget:      req.Budget,
-		Platform:    req.Platform,
-		Status:      domain.CampaignStatusOpen,
+		BrandID:      brandID,
+		Title:        req.Title,
+		Description:  req.Description,
+		Budget:       req.Budget,
+		Platform:     req.Platform,
+		Requirements: req.Requirements,
+		Status:       domain.CampaignStatusOpen,
 	}
 
 	if err := h.service.CreateCampaign(c.Request.Context(), campaign); err != nil {
