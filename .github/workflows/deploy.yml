@@ -49,29 +49,11 @@ jobs:
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
 
-      - name: Create App Runner IAM access role if not exists
+      - name: Get IAM role ARN
         id: iam-role
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ROLE_NAME="AppRunnerECRAccessRole"
-          ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
-
-          aws iam get-role --role-name "$ROLE_NAME" 2>/dev/null || \
-          (aws iam create-role \
-            --role-name "$ROLE_NAME" \
-            --assume-role-policy-document '{
-              "Version": "2012-10-17",
-              "Statement": [{
-                "Effect": "Allow",
-                "Principal": { "Service": "build.apprunner.amazonaws.com" },
-                "Action": "sts:AssumeRole"
-              }]
-            }' && \
-          aws iam attach-role-policy \
-            --role-name "$ROLE_NAME" \
-            --policy-arn arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess)
-
-          echo "role_arn=$ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "role_arn=arn:aws:iam::${ACCOUNT_ID}:role/AppRunnerECRAccessRole" >> $GITHUB_OUTPUT
 
       - name: Deploy to App Runner
         env:
