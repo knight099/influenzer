@@ -36,6 +36,8 @@ func NewPaymentHandler(r *gin.Engine, s service.PaymentService, authMiddleware g
 		p.GET("/plans", handler.GetPlans)                         // Fetch subscription plans
 		p.POST("/subscribe", handler.Subscribe)                   // Create subscription
 		p.GET("/subscription/status", handler.SubscriptionStatus) // Check subscription status
+		p.POST("/bank-account", handler.SaveBankAccount)          // Creator saves bank account
+		p.GET("/bank-account", handler.GetBankAccount)            // Get creator's bank account
 	}
 
 	// Wallet Group
@@ -281,6 +283,70 @@ func (h *PaymentHandler) SubscriptionStatus(c *gin.Context) {
 		Subscription:    &subscription,
 		Plan:            &plan,
 		IsActive:        isActive,
+	})
+}
+
+type bankAccountRequest struct {
+	AccountHolderName string `json:"account_holder_name" binding:"required"`
+	AccountNumber     string `json:"account_number" binding:"required"`
+	IFSC              string `json:"ifsc" binding:"required"`
+	BankName          string `json:"bank_name"`
+}
+
+func (h *PaymentHandler) SaveBankAccount(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req bankAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	account := &domain.BankAccount{
+		AccountHolderName: req.AccountHolderName,
+		AccountNumber:     req.AccountNumber,
+		IFSC:              req.IFSC,
+		BankName:          req.BankName,
+	}
+
+	if err := h.service.SaveBankAccount(c.Request.Context(), userIDVal.(string), account); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Bank account saved"})
+}
+
+func (h *PaymentHandler) GetBankAccount(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	account, err := h.service.GetBankAccount(c.Request.Context(), userIDVal.(string))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No bank account found"})
+		return
+	}
+
+	// Mask account number for security
+	masked := account.AccountNumber
+	if len(masked) > 4 {
+		masked = "****" + masked[len(masked)-4:]
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":                  account.ID,
+		"account_holder_name": account.AccountHolderName,
+		"account_number":      masked,
+		"ifsc":                account.IFSC,
+		"bank_name":           account.BankName,
+		"is_linked":           account.RazorpayFundAccID != "",
 	})
 }
 

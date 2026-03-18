@@ -102,11 +102,23 @@ func (m *MockClient) CreateSubscription(planID string, totalCount int, customerN
 	args := m.Called(planID, totalCount, customerNotify, notes)
 	return args.String(0), args.String(1), args.Error(2)
 }
+func (m *MockClient) CreateContact(name, email, phone, contactType string) (string, error) {
+	args := m.Called(name, email, phone, contactType)
+	return args.String(0), args.Error(1)
+}
+func (m *MockClient) CreateFundAccount(contactID, accountHolderName, accountNumber, ifsc string) (string, error) {
+	args := m.Called(contactID, accountHolderName, accountNumber, ifsc)
+	return args.String(0), args.Error(1)
+}
+func (m *MockClient) CreatePayout(accountNumber, fundAccountID string, amount float64, currency, purpose string, notes map[string]interface{}) (string, error) {
+	args := m.Called(accountNumber, fundAccountID, amount, currency, purpose, notes)
+	return args.String(0), args.Error(1)
+}
 
 func TestCreateEscrow(t *testing.T) {
 	repo := new(MockProposalRepo)
 	rzp := new(MockClient)
-	svc := service.NewPaymentService(repo, nil, nil, rzp) // CampaignRepo and userRepo not needed for CreateEscrow
+	svc := service.NewPaymentService(repo, nil, nil, rzp, nil, "") // CampaignRepo and userRepo not needed for CreateEscrow
 
 	proposalID := uuid.New()
 	proposal := &domain.Proposal{
@@ -131,7 +143,7 @@ func TestCreateEscrow(t *testing.T) {
 
 func TestCreateEscrow_InvalidStatus(t *testing.T) {
 	repo := new(MockProposalRepo)
-	svc := service.NewPaymentService(repo, nil, nil, nil)
+	svc := service.NewPaymentService(repo, nil, nil, nil, nil, "")
 
 	proposalID := uuid.New()
 	proposal := &domain.Proposal{
@@ -151,7 +163,7 @@ func TestReleaseFunds(t *testing.T) {
 	repo := new(MockProposalRepo)
 	userRepo := new(MockAuthRepo)
 	rzp := new(MockClient)
-	svc := service.NewPaymentService(repo, nil, userRepo, rzp)
+	svc := service.NewPaymentService(repo, nil, userRepo, rzp, nil, "")
 
 	creatorID := uuid.New()
 	proposalID := uuid.New()

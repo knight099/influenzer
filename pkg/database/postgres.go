@@ -54,6 +54,7 @@ func AutoMigrate() {
 		&domain.Notification{},
 		&domain.DeviceToken{},
 		&domain.DirectConversation{},
+		&domain.BankAccount{},
 	)
 	if err != nil {
 		log.Fatal("Migration failed:", err)

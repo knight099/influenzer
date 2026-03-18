@@ -14,16 +14,25 @@ type Client interface {
 	VerifyPaymentSignature(orderID, paymentID, signature string) error
 	TransferFunds(accountID string, amount float64, currency string, notes map[string]interface{}) (string, error)
 	CreateSubscription(planID string, totalCount int, customerNotify int, notes map[string]interface{}) (subscriptionID string, shortURL string, err error)
+	// Razorpay X Payout methods
+	CreateContact(name, email, phone, contactType string) (contactID string, err error)
+	CreateFundAccount(contactID, accountHolderName, accountNumber, ifsc string) (fundAccountID string, err error)
+	CreatePayout(accountNumber, fundAccountID string, amount float64, currency, purpose string, notes map[string]interface{}) (payoutID string, err error)
 }
 
 type razorpayClient struct {
-	client    *razorpay.Client
-	keySecret string
+	client        *razorpay.Client
+	keySecret     string
+	accountNumber string // Razorpay X account number for payouts
 }
 
 func NewRazorpayClient(cfg *config.Config) Client {
 	client := razorpay.NewClient(cfg.RazorpayKeyID, cfg.RazorpayKeySecret)
-	return &razorpayClient{client: client, keySecret: cfg.RazorpayKeySecret}
+	return &razorpayClient{
+		client:        client,
+		keySecret:     cfg.RazorpayKeySecret,
+		accountNumber: cfg.RazorpayAccountNumber,
+	}
 }
 
 func (r *razorpayClient) CreateOrder(amount float64, currency string, receipt string, notes map[string]interface{}) (string, error) {
@@ -75,6 +84,70 @@ func (r *razorpayClient) TransferFunds(accountID string, amount float64, currenc
 		return "", errors.New("failed to parse transfer id")
 	}
 	return transferID, nil
+}
+
+func (r *razorpayClient) CreateContact(name, email, phone, contactType string) (string, error) {
+	data := map[string]interface{}{
+		"name":    name,
+		"type":    contactType,
+		"email":   email,
+		"contact": phone,
+	}
+	body, err := r.client.Post("/v1/contacts", data, nil)
+	if err != nil {
+		return "", fmt.Errorf("razorpay create contact failed: %v", err)
+	}
+	contactID, ok := body["id"].(string)
+	if !ok {
+		return "", errors.New("failed to parse contact id")
+	}
+	return contactID, nil
+}
+
+func (r *razorpayClient) CreateFundAccount(contactID, accountHolderName, accountNumber, ifsc string) (string, error) {
+	data := map[string]interface{}{
+		"contact_id":   contactID,
+		"account_type": "bank_account",
+		"bank_account": map[string]interface{}{
+			"name":           accountHolderName,
+			"ifsc":           ifsc,
+			"account_number": accountNumber,
+		},
+	}
+	body, err := r.client.FundAccount.Create(data, nil)
+	if err != nil {
+		return "", fmt.Errorf("razorpay create fund account failed: %v", err)
+	}
+	fundAccountID, ok := body["id"].(string)
+	if !ok {
+		return "", errors.New("failed to parse fund account id")
+	}
+	return fundAccountID, nil
+}
+
+func (r *razorpayClient) CreatePayout(accountNumber, fundAccountID string, amount float64, currency, purpose string, notes map[string]interface{}) (string, error) {
+	data := map[string]interface{}{
+		"account_number":       accountNumber,
+		"fund_account_id":      fundAccountID,
+		"amount":               int64(amount * 100),
+		"currency":             currency,
+		"mode":                 "IMPS",
+		"purpose":              purpose,
+		"queue_if_low_balance": true,
+	}
+	if notes != nil {
+		data["notes"] = notes
+	}
+	// Payout resource doesn't have Create; use underlying request directly
+	body, err := r.client.Post("/v1/payouts", data, nil)
+	if err != nil {
+		return "", fmt.Errorf("razorpay create payout failed: %v", err)
+	}
+	payoutID, ok := body["id"].(string)
+	if !ok {
+		return "", errors.New("failed to parse payout id")
+	}
+	return payoutID, nil
 }
 
 func (r *razorpayClient) CreateSubscription(planID string, totalCount int, customerNotify int, notes map[string]interface{}) (string, string, error) {

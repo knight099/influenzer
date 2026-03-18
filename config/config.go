@@ -9,9 +9,10 @@ type Config struct {
 	Port                  string `mapstructure:"PORT"`
 	DatabaseURL           string `mapstructure:"DATABASE_URL"`
 	JWTSecret             string `mapstructure:"JWT_SECRET"`
-	RazorpayKeyID         string `mapstructure:"RAZORPAY_KEY_ID"`
-	RazorpayKeySecret     string `mapstructure:"RAZORPAY_KEY_SECRET"`
-	RazorpayWebhookSecret string `mapstructure:"RAZORPAY_WEBHOOK_SECRET"`
+	RazorpayKeyID          string `mapstructure:"RAZORPAY_KEY_ID"`
+	RazorpayKeySecret      string `mapstructure:"RAZORPAY_KEY_SECRET"`
+	RazorpayWebhookSecret  string `mapstructure:"RAZORPAY_WEBHOOK_SECRET"`
+	RazorpayAccountNumber  string `mapstructure:"RAZORPAY_ACCOUNT_NUMBER"` // Razorpay X account for payouts
 	GoogleClientID        string `mapstructure:"GOOGLE_CLIENT_ID"`
 	GoogleClientSecret    string `mapstructure:"GOOGLE_CLIENT_SECRET"`
 	InstagramClientID     string `mapstructure:"INSTAGRAM_CLIENT_ID"`
@@ -31,6 +32,7 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("RAZORPAY_KEY_ID")
 	viper.BindEnv("RAZORPAY_KEY_SECRET")
 	viper.BindEnv("RAZORPAY_WEBHOOK_SECRET")
+	viper.BindEnv("RAZORPAY_ACCOUNT_NUMBER")
 	viper.BindEnv("GOOGLE_CLIENT_ID")
 	viper.BindEnv("GOOGLE_CLIENT_SECRET")
 	viper.BindEnv("INSTAGRAM_CLIENT_ID")

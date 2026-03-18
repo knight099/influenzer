@@ -90,7 +90,7 @@ func main() {
 
 	// - Payments
 	rzpClient := razorpay.NewRazorpayClient(&cfg)
-	paymentService := service.NewPaymentService(proposalRepo, campaignRepo, authRepo, rzpClient)
+	paymentService := service.NewPaymentService(proposalRepo, campaignRepo, authRepo, rzpClient, database.DB, cfg.RazorpayAccountNumber)
 	httpDelivery.NewPaymentHandler(r, paymentService, authMiddleware, database.DB, rzpClient, cfg.RazorpayWebhookSecret)
 
 	// - Social

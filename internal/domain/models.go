@@ -109,6 +109,20 @@ type Proposal struct {
 	Campaign Campaign `json:"campaign,omitempty" gorm:"foreignKey:CampaignID"`
 }
 
+// BankAccount stores creator bank account details for payouts
+type BankAccount struct {
+	ID                  uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	UserID              uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"user_id"`
+	AccountHolderName   string    `json:"account_holder_name"`
+	AccountNumber       string    `json:"account_number"`
+	IFSC                string    `json:"ifsc"`
+	BankName            string    `json:"bank_name"`
+	RazorpayContactID   string    `json:"razorpay_contact_id"`
+	RazorpayFundAccID   string    `json:"razorpay_fund_account_id"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
 type Transaction struct {
 	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	UserID    uuid.UUID `gorm:"type:uuid;not null" json:"user_id"`
