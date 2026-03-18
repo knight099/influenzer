@@ -43,6 +43,45 @@ func (m *MockProposalRepo) Update(ctx context.Context, p *domain.Proposal) error
 	return args.Error(0)
 }
 
+type MockAuthRepo struct {
+	mock.Mock
+}
+
+func (m *MockAuthRepo) CreateUser(ctx context.Context, u *domain.User) error {
+	return m.Called(ctx, u).Error(0)
+}
+func (m *MockAuthRepo) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
+	args := m.Called(ctx, email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.User), args.Error(1)
+}
+func (m *MockAuthRepo) GetUserByGoogleID(ctx context.Context, googleID string) (*domain.User, error) {
+	args := m.Called(ctx, googleID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.User), args.Error(1)
+}
+func (m *MockAuthRepo) GetBaseUserByID(ctx context.Context, id string) (*domain.User, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.User), args.Error(1)
+}
+func (m *MockAuthRepo) UpdateUser(ctx context.Context, u *domain.User) error {
+	return m.Called(ctx, u).Error(0)
+}
+func (m *MockAuthRepo) GetCreatorProfileByUserID(ctx context.Context, userID string) (*domain.CreatorProfile, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.CreatorProfile), args.Error(1)
+}
+
 type MockClient struct {
 	mock.Mock
 }
@@ -67,7 +106,7 @@ func (m *MockClient) CreateSubscription(planID string, totalCount int, customerN
 func TestCreateEscrow(t *testing.T) {
 	repo := new(MockProposalRepo)
 	rzp := new(MockClient)
-	svc := service.NewPaymentService(repo, nil, rzp) // CampaignRepo not needed for CreateEscrow
+	svc := service.NewPaymentService(repo, nil, nil, rzp) // CampaignRepo and userRepo not needed for CreateEscrow
 
 	proposalID := uuid.New()
 	proposal := &domain.Proposal{
@@ -92,7 +131,7 @@ func TestCreateEscrow(t *testing.T) {
 
 func TestCreateEscrow_InvalidStatus(t *testing.T) {
 	repo := new(MockProposalRepo)
-	svc := service.NewPaymentService(repo, nil, nil)
+	svc := service.NewPaymentService(repo, nil, nil, nil)
 
 	proposalID := uuid.New()
 	proposal := &domain.Proposal{
@@ -110,19 +149,26 @@ func TestCreateEscrow_InvalidStatus(t *testing.T) {
 
 func TestReleaseFunds(t *testing.T) {
 	repo := new(MockProposalRepo)
+	userRepo := new(MockAuthRepo)
 	rzp := new(MockClient)
-	svc := service.NewPaymentService(repo, nil, rzp)
+	svc := service.NewPaymentService(repo, nil, userRepo, rzp)
 
+	creatorID := uuid.New()
 	proposalID := uuid.New()
 	proposal := &domain.Proposal{
 		ID:        proposalID,
+		CreatorID: creatorID,
 		BidAmount: 1000,
 		Status:    domain.ProposalStatusCompleted,
 	}
+	creatorProfile := &domain.CreatorProfile{
+		UserID:            creatorID,
+		RazorpayAccountID: "acc_live_creator_xyz",
+	}
 
 	repo.On("GetByID", mock.Anything, proposalID.String()).Return(proposal, nil)
-	// 900 to creator
-	rzp.On("TransferFunds", "acc_test_123", 900.0, "INR", mock.Anything).Return("transfer_123", nil)
+	userRepo.On("GetCreatorProfileByUserID", mock.Anything, creatorID.String()).Return(creatorProfile, nil)
+	rzp.On("TransferFunds", "acc_live_creator_xyz", 900.0, "INR", mock.Anything).Return("transfer_123", nil)
 	repo.On("Update", mock.Anything, mock.MatchedBy(func(p *domain.Proposal) bool {
 		return p.Status == domain.ProposalStatusPaid
 	})).Return(nil)
@@ -131,4 +177,6 @@ func TestReleaseFunds(t *testing.T) {
 
 	assert.NoError(t, err)
 	repo.AssertExpectations(t)
+	userRepo.AssertExpectations(t)
+	rzp.AssertExpectations(t)
 }

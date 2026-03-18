@@ -403,8 +403,49 @@ func (h *PaymentHandler) Webhook(c *gin.Context) {
 			log.Printf("Subscription %s not found in DB", subID)
 		}
 	} else if event == "payment.captured" {
-		// Existing logic placeholder
-		log.Println("Webhook received payment.captured - Logic pending implementation")
+		pl, ok := payload["payload"].(map[string]interface{})
+		if !ok {
+			c.JSON(200, gin.H{"status": "ok"})
+			return
+		}
+
+		payData, ok := pl["payment"].(map[string]interface{})
+		if !ok {
+			c.JSON(200, gin.H{"status": "ok"})
+			return
+		}
+
+		entity, ok := payData["entity"].(map[string]interface{})
+		if !ok {
+			c.JSON(200, gin.H{"status": "ok"})
+			return
+		}
+
+		orderID, _ := entity["order_id"].(string)
+		paymentID, _ := entity["id"].(string)
+
+		if orderID == "" {
+			log.Println("payment.captured webhook missing order_id")
+			c.JSON(200, gin.H{"status": "ok"})
+			return
+		}
+
+		var proposal domain.Proposal
+		if err := h.db.Where("razorpay_order_id = ?", orderID).First(&proposal).Error; err != nil {
+			log.Printf("payment.captured: proposal not found for order %s: %v", orderID, err)
+			c.JSON(200, gin.H{"status": "ok"})
+			return
+		}
+
+		if proposal.Status == domain.ProposalStatusApproved {
+			proposal.Status = domain.ProposalStatusFunded
+			proposal.RazorpayPaymentID = paymentID
+			if err := h.db.Save(&proposal).Error; err != nil {
+				log.Printf("payment.captured: failed to update proposal %s: %v", proposal.ID, err)
+			} else {
+				log.Printf("payment.captured: proposal %s marked as FUNDED", proposal.ID)
+			}
+		}
 	}
 
 	c.JSON(200, gin.H{"status": "ok"})

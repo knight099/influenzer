@@ -11,6 +11,7 @@ type AuthRepository interface {
 	GetUserByGoogleID(ctx context.Context, googleID string) (*User, error)
 	GetBaseUserByID(ctx context.Context, id string) (*User, error) // Renamed to avoid confusion
 	UpdateUser(ctx context.Context, user *User) error
+	GetCreatorProfileByUserID(ctx context.Context, userID string) (*CreatorProfile, error)
 }
 
 // AuthService defines the business logic for authentication

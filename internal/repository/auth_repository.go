@@ -49,3 +49,12 @@ func (r *authRepository) GetBaseUserByID(ctx context.Context, id string) (*domai
 func (r *authRepository) UpdateUser(ctx context.Context, user *domain.User) error {
 	return r.db.WithContext(ctx).Save(user).Error
 }
+
+func (r *authRepository) GetCreatorProfileByUserID(ctx context.Context, userID string) (*domain.CreatorProfile, error) {
+	var profile domain.CreatorProfile
+	err := r.db.WithContext(ctx).Where("user_id = ?", userID).First(&profile).Error
+	if err != nil {
+		return nil, err
+	}
+	return &profile, nil
+}

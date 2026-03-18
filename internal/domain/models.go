@@ -61,12 +61,13 @@ type BrandProfile struct {
 }
 
 type CreatorProfile struct {
-	UserID    uuid.UUID `gorm:"type:uuid;primaryKey" json:"user_id"`
-	Niche     string    `gorm:"type:text" json:"niche"` // Comma separated tags
-	MinBudget float64   `json:"min_budget"`
-	City      string    `json:"city"`
-	Phone     string    `json:"phone"`
-	Platform  string    `json:"platform"` // e.g. "instagram", "youtube"
+	UserID             uuid.UUID `gorm:"type:uuid;primaryKey" json:"user_id"`
+	Niche              string    `gorm:"type:text" json:"niche"` // Comma separated tags
+	MinBudget          float64   `json:"min_budget"`
+	City               string    `json:"city"`
+	Phone              string    `json:"phone"`
+	Platform           string    `json:"platform"` // e.g. "instagram", "youtube"
+	RazorpayAccountID  string    `json:"razorpay_account_id"`
 	// JSONB for stats
 	CachedStats map[string]interface{} `gorm:"serializer:json" json:"cached_stats"`
 	Portfolio   map[string]interface{} `gorm:"serializer:json" json:"portfolio"` // Store video links

@@ -18,13 +18,15 @@ type PaymentService interface {
 type paymentService struct {
 	proposalRepo domain.ProposalRepository
 	campaignRepo domain.CampaignRepository
+	userRepo     domain.AuthRepository
 	rzp          params.Client
 }
 
-func NewPaymentService(pRepo domain.ProposalRepository, cRepo domain.CampaignRepository, rzp params.Client) PaymentService {
+func NewPaymentService(pRepo domain.ProposalRepository, cRepo domain.CampaignRepository, userRepo domain.AuthRepository, rzp params.Client) PaymentService {
 	return &paymentService{
 		proposalRepo: pRepo,
 		campaignRepo: cRepo,
+		userRepo:     userRepo,
 		rzp:          rzp,
 	}
 }
@@ -85,13 +87,19 @@ func (s *paymentService) ReleaseFunds(ctx context.Context, proposalID string) er
 		return errors.New("proposal must be COMPLETED to release funds")
 	}
 
+	creatorProfile, err := s.userRepo.GetCreatorProfileByUserID(ctx, proposal.CreatorID.String())
+	if err != nil {
+		return fmt.Errorf("failed to fetch creator profile: %w", err)
+	}
+
+	if creatorProfile.RazorpayAccountID == "" {
+		return errors.New("creator has no Razorpay account linked")
+	}
+
 	totalAmount := proposal.BidAmount
 	creatorShare := totalAmount * 0.90
 
-	// Mock Account ID
-	creatorAccountID := "acc_test_123"
-
-	_, err = s.rzp.TransferFunds(creatorAccountID, creatorShare, "INR", nil)
+	_, err = s.rzp.TransferFunds(creatorProfile.RazorpayAccountID, creatorShare, "INR", nil)
 	if err != nil {
 		return err
 	}
