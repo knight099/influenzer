@@ -27,6 +27,7 @@ func NewCampaignHandler(r *gin.Engine, s domain.CampaignService, authMiddleware 
 		g.POST("", handler.Create)
 		g.GET("", handler.List)
 		g.GET("/my", handler.ListMy)
+		g.GET("/my/invitable/:creatorId", handler.ListInvitable)
 		g.GET("/invitations", handler.GetInvitations)
 		g.POST("/:id/invite", handler.InviteCreator)
 		g.PATCH("/:id/close", handler.Close)
@@ -107,6 +108,47 @@ func (h *CampaignHandler) ListMy(c *gin.Context) {
 		campaigns = []domain.Campaign{}
 	}
 	c.JSON(http.StatusOK, campaigns)
+}
+
+// ListInvitable returns the brand's open campaigns that the given creator hasn't applied to or been invited to.
+func (h *CampaignHandler) ListInvitable(c *gin.Context) {
+	brandID := mustUserID(c)
+
+	creatorID, err := uuid.Parse(c.Param("creatorId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid creator ID"})
+		return
+	}
+
+	var campaigns []domain.Campaign
+	if err := h.db.Where("brand_id = ? AND status = ?", brandID, domain.CampaignStatusOpen).
+		Order("created_at DESC").Find(&campaigns).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := []domain.Campaign{}
+	for _, campaign := range campaigns {
+		var proposalCount int64
+		h.db.Model(&domain.Proposal{}).
+			Where("campaign_id = ? AND creator_id = ?", campaign.ID, creatorID).
+			Count(&proposalCount)
+		if proposalCount > 0 {
+			continue
+		}
+
+		var inviteCount int64
+		h.db.Model(&domain.Notification{}).
+			Where("user_id = ? AND type = ? AND resource_id = ?", creatorID, domain.NotifCampaignInvite, campaign.ID.String()).
+			Count(&inviteCount)
+		if inviteCount > 0 {
+			continue
+		}
+
+		result = append(result, campaign)
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 type inviteCreatorRequest struct {
