@@ -13,6 +13,21 @@ import (
 	"gorm.io/gorm"
 )
 
+// CreatorMediaItem is a unified media item returned for both Instagram and YouTube.
+type CreatorMediaItem struct {
+	Platform    string `json:"platform"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Caption     string `json:"caption"`
+	ThumbnailURL string `json:"thumbnail_url"`
+	MediaURL    string `json:"media_url"`
+	Permalink   string `json:"permalink"`
+	MediaType   string `json:"media_type"` // VIDEO, IMAGE, CAROUSEL_ALBUM, YOUTUBE
+	ViewCount   int64  `json:"view_count"`
+	LikeCount   int64  `json:"like_count"`
+	PublishedAt string `json:"published_at"`
+}
+
 type CreatorHandler struct {
 	db *gorm.DB
 }
@@ -26,6 +41,7 @@ func NewCreatorHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFun
 		g.GET("/search", handler.Search)
 		g.GET("/spotlight", handler.Spotlight)
 		g.GET("/:id", handler.GetProfile)
+		g.GET("/:id/media", handler.GetCreatorMedia)
 	}
 
 	// API prefix group for mobile/frontend compatibility
@@ -224,10 +240,14 @@ func (h *CreatorHandler) GetProfile(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"id":      profile.UserID,
-		"niche":   profile.Niche,
-		"videos":  profile.Portfolio, // JSONB
-		"reviews": []string{},        // Mock
+		"id":          profile.UserID,
+		"niche":       profile.Niche,
+		"min_budget":  profile.MinBudget,
+		"city":        profile.City,
+		"platform":    profile.Platform,
+		"portfolio":   profile.Portfolio,
+		"cached_stats": profile.CachedStats,
+		"reviews":     []string{},
 	})
 }
 
@@ -567,4 +587,329 @@ func (h *CreatorHandler) fetchInstagramStats(accessToken string) (map[string]int
 		"media_count":     igResp.MediaCount,
 		"profile_picture": igResp.ProfilePicture,
 	}, nil
+}
+
+// GetCreatorMedia godoc
+// @Summary Get creator media
+// @Description Returns recent Instagram posts and/or YouTube videos for a creator with view counts.
+// @Tags creators
+// @Produce json
+// @Param id path string true "Creator user ID"
+// @Param platform query string false "Filter by platform: instagram | youtube (omit for both)"
+// @Param limit query int false "Max items per platform (default 12)"
+// @Success 200 {object} map[string]interface{} "instagram and/or youtube arrays of CreatorMediaItem"
+// @Failure 404 {object} map[string]interface{} "Creator not found"
+// @Security BearerAuth
+// @Router /creators/{id}/media [get]
+func (h *CreatorHandler) GetCreatorMedia(c *gin.Context) {
+	creatorID := c.Param("id")
+	platform := strings.ToLower(c.Query("platform")) // "instagram", "youtube", or ""
+	limit := 12
+
+	// Load creator's user record (tokens live on User)
+	var user domain.User
+	if err := h.db.Where("id = ?", creatorID).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Creator not found"})
+		return
+	}
+
+	response := gin.H{}
+
+	if platform == "" || platform == "instagram" {
+		if user.InstagramToken != "" {
+			items, err := h.fetchInstagramMedia(user.InstagramToken, limit)
+			if err != nil {
+				response["instagram_error"] = err.Error()
+			} else {
+				response["instagram"] = items
+			}
+		} else {
+			response["instagram"] = []CreatorMediaItem{}
+		}
+	}
+
+	if platform == "" || platform == "youtube" {
+		if user.YoutubeToken != "" {
+			items, err := h.fetchYouTubeVideos(user.YoutubeToken, limit)
+			if err != nil {
+				response["youtube_error"] = err.Error()
+			} else {
+				response["youtube"] = items
+			}
+		} else {
+			response["youtube"] = []CreatorMediaItem{}
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// ── Instagram ────────────────────────────────────────────────────────────────
+
+type igMediaListResponse struct {
+	Data []struct {
+		ID           string `json:"id"`
+		Caption      string `json:"caption"`
+		MediaType    string `json:"media_type"`
+		MediaURL     string `json:"media_url"`
+		ThumbnailURL string `json:"thumbnail_url"`
+		Permalink    string `json:"permalink"`
+		Timestamp    string `json:"timestamp"`
+		VideoViews   int64  `json:"video_views"`
+		LikeCount    int64  `json:"like_count"`
+	} `json:"data"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func (h *CreatorHandler) fetchInstagramMedia(accessToken string, limit int) ([]CreatorMediaItem, error) {
+	fields := "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,video_views,like_count"
+	url := fmt.Sprintf(
+		"https://graph.instagram.com/me/media?fields=%s&limit=%d&access_token=%s",
+		fields, limit, accessToken,
+	)
+
+	resp, err := http.Get(url) //nolint:noctx
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach Instagram API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var igResp igMediaListResponse
+	if err := json.Unmarshal(body, &igResp); err != nil {
+		return nil, err
+	}
+	if igResp.Error != nil {
+		return nil, fmt.Errorf("Instagram API error: %s", igResp.Error.Message)
+	}
+
+	items := make([]CreatorMediaItem, 0, len(igResp.Data))
+	for _, m := range igResp.Data {
+		// For images/carousels, view_count is 0 — that's expected
+		thumbURL := m.ThumbnailURL
+		if thumbURL == "" && m.MediaType == "IMAGE" {
+			thumbURL = m.MediaURL
+		}
+		// First line of caption as title
+		title := m.Caption
+		if idx := strings.IndexByte(m.Caption, '\n'); idx != -1 {
+			title = m.Caption[:idx]
+		}
+		if len(title) > 100 {
+			title = title[:100]
+		}
+		items = append(items, CreatorMediaItem{
+			Platform:     "instagram",
+			ID:           m.ID,
+			Title:        title,
+			Caption:      m.Caption,
+			ThumbnailURL: thumbURL,
+			MediaURL:     m.MediaURL,
+			Permalink:    m.Permalink,
+			MediaType:    m.MediaType,
+			ViewCount:    m.VideoViews,
+			LikeCount:    m.LikeCount,
+			PublishedAt:  m.Timestamp,
+		})
+	}
+	return items, nil
+}
+
+// ── YouTube ──────────────────────────────────────────────────────────────────
+
+type ytChannelContentResponse struct {
+	Items []struct {
+		ContentDetails struct {
+			RelatedPlaylists struct {
+				Uploads string `json:"uploads"`
+			} `json:"relatedPlaylists"`
+		} `json:"contentDetails"`
+	} `json:"items"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+type ytPlaylistItemsResponse struct {
+	Items []struct {
+		Snippet struct {
+			PublishedAt string `json:"publishedAt"`
+			Title       string `json:"title"`
+			Description string `json:"description"`
+			Thumbnails  struct {
+				High struct {
+					URL string `json:"url"`
+				} `json:"high"`
+				Default struct {
+					URL string `json:"url"`
+				} `json:"default"`
+			} `json:"thumbnails"`
+			ResourceID struct {
+				VideoID string `json:"videoId"`
+			} `json:"resourceId"`
+		} `json:"snippet"`
+	} `json:"items"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+type ytVideosResponse struct {
+	Items []struct {
+		ID      string `json:"id"`
+		Statistics struct {
+			ViewCount string `json:"viewCount"`
+			LikeCount string `json:"likeCount"`
+		} `json:"statistics"`
+	} `json:"items"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func (h *CreatorHandler) fetchYouTubeVideos(accessToken string, limit int) ([]CreatorMediaItem, error) {
+	doGet := func(url string) ([]byte, error) {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		resp, err := (&http.Client{}).Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		return io.ReadAll(resp.Body)
+	}
+
+	// Step 1: get uploads playlist ID
+	body, err := doGet("https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true")
+	if err != nil {
+		return nil, fmt.Errorf("YouTube channels API failed: %w", err)
+	}
+	var chResp ytChannelContentResponse
+	if err := json.Unmarshal(body, &chResp); err != nil {
+		return nil, err
+	}
+	if chResp.Error != nil {
+		return nil, fmt.Errorf("YouTube API error: %s", chResp.Error.Message)
+	}
+	if len(chResp.Items) == 0 {
+		return nil, fmt.Errorf("no YouTube channel found")
+	}
+	uploadsPlaylistID := chResp.Items[0].ContentDetails.RelatedPlaylists.Uploads
+	if uploadsPlaylistID == "" {
+		return nil, fmt.Errorf("YouTube uploads playlist not found")
+	}
+
+	// Step 2: list recent uploads
+	plURL := fmt.Sprintf(
+		"https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=%s&maxResults=%d",
+		uploadsPlaylistID, limit,
+	)
+	body, err = doGet(plURL)
+	if err != nil {
+		return nil, fmt.Errorf("YouTube playlistItems API failed: %w", err)
+	}
+	var plResp ytPlaylistItemsResponse
+	if err := json.Unmarshal(body, &plResp); err != nil {
+		return nil, err
+	}
+	if plResp.Error != nil {
+		return nil, fmt.Errorf("YouTube API error: %s", plResp.Error.Message)
+	}
+	if len(plResp.Items) == 0 {
+		return []CreatorMediaItem{}, nil
+	}
+
+	// Collect video IDs and build a lookup map for snippet data
+	type snippetData struct {
+		title       string
+		description string
+		thumbnail   string
+		publishedAt string
+	}
+	snippetMap := make(map[string]snippetData, len(plResp.Items))
+	videoIDs := make([]string, 0, len(plResp.Items))
+	for _, item := range plResp.Items {
+		vid := item.Snippet.ResourceID.VideoID
+		if vid == "" {
+			continue
+		}
+		videoIDs = append(videoIDs, vid)
+		thumb := item.Snippet.Thumbnails.High.URL
+		if thumb == "" {
+			thumb = item.Snippet.Thumbnails.Default.URL
+		}
+		snippetMap[vid] = snippetData{
+			title:       item.Snippet.Title,
+			description: item.Snippet.Description,
+			thumbnail:   thumb,
+			publishedAt: item.Snippet.PublishedAt,
+		}
+	}
+
+	// Step 3: fetch statistics for all videos in one request
+	vidStatsURL := fmt.Sprintf(
+		"https://www.googleapis.com/youtube/v3/videos?part=statistics&id=%s",
+		strings.Join(videoIDs, ","),
+	)
+	body, err = doGet(vidStatsURL)
+	if err != nil {
+		return nil, fmt.Errorf("YouTube videos API failed: %w", err)
+	}
+	var vidResp ytVideosResponse
+	if err := json.Unmarshal(body, &vidResp); err != nil {
+		return nil, err
+	}
+	if vidResp.Error != nil {
+		return nil, fmt.Errorf("YouTube API error: %s", vidResp.Error.Message)
+	}
+
+	// index statistics by video ID
+	type videoStats struct {
+		viewCount string
+		likeCount string
+	}
+	statsByID := make(map[string]videoStats, len(vidResp.Items))
+	for _, v := range vidResp.Items {
+		statsByID[v.ID] = videoStats{
+			viewCount: v.Statistics.ViewCount,
+			likeCount: v.Statistics.LikeCount,
+		}
+	}
+
+	// Build response in upload order
+	items := make([]CreatorMediaItem, 0, len(videoIDs))
+	for _, vid := range videoIDs {
+		sn := snippetMap[vid]
+		st := statsByID[vid]
+		items = append(items, CreatorMediaItem{
+			Platform:     "youtube",
+			ID:           vid,
+			Title:        sn.title,
+			Caption:      sn.description,
+			ThumbnailURL: sn.thumbnail,
+			MediaURL:     "https://www.youtube.com/watch?v=" + vid,
+			Permalink:    "https://www.youtube.com/watch?v=" + vid,
+			MediaType:    "YOUTUBE",
+			ViewCount:    parseCount(st.viewCount),
+			LikeCount:    parseCount(st.likeCount),
+			PublishedAt:  sn.publishedAt,
+		})
+	}
+	return items, nil
+}
+
+// parseCount converts a string count from the YouTube API to int64.
+func parseCount(s string) int64 {
+	var n int64
+	fmt.Sscanf(s, "%d", &n)
+	return n
 }

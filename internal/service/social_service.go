@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
@@ -15,10 +18,7 @@ type SocialService interface {
 type socialService struct {
 	proposalRepo domain.ProposalRepository
 	campaignRepo domain.CampaignRepository
-	// authRepo needed to get user tokens if they are not in Context?
-	// actually tokens are on User struct. But Proposal has CreatorID.
-	// We need to fetch Creator to get the token.
-	authRepo domain.AuthRepository
+	authRepo     domain.AuthRepository
 }
 
 func NewSocialService(pRepo domain.ProposalRepository, cRepo domain.CampaignRepository, aRepo domain.AuthRepository) SocialService {
@@ -71,18 +71,61 @@ func (s *socialService) SubmitProof(ctx context.Context, proposalID string, inst
 	return s.proposalRepo.Update(ctx, proposal)
 }
 
-func (s *socialService) verifyInstagramPost(url, token, hashtag string) error {
-	// Mock Logic
-	// In real world: Call Graph API /media endpoint
+func (s *socialService) verifyInstagramPost(postURL, token, requiredHashtag string) error {
 	if token == "" {
-		// return errors.New("creator has not linked instagram")
-		// For testing allow empty token
+		// Can't verify without a token; allow submission
+		return nil
 	}
 
-	// If hashtag matches "fail", simulate failure
-	if strings.Contains(url, "fail") {
-		return errors.New("verification failed: caption does not contain required tags")
+	shortcode := extractInstagramShortcode(postURL)
+	if shortcode == "" {
+		return errors.New("invalid Instagram post URL")
 	}
 
-	return nil
+	// Fetch recent media to find the post and check its caption
+	apiURL := fmt.Sprintf("https://graph.instagram.com/me/media?fields=id,caption,permalink&access_token=%s", token)
+	resp, err := http.Get(apiURL) //nolint:noctx
+	if err != nil {
+		return fmt.Errorf("failed to reach Instagram API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data []struct {
+			ID        string `json:"id"`
+			Caption   string `json:"caption"`
+			Permalink string `json:"permalink"`
+		} `json:"data"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("failed to parse Instagram response: %w", err)
+	}
+	if result.Error != nil {
+		return fmt.Errorf("Instagram API error: %s", result.Error.Message)
+	}
+
+	for _, media := range result.Data {
+		if strings.Contains(media.Permalink, shortcode) {
+			if requiredHashtag != "" && !strings.Contains(media.Caption, requiredHashtag) {
+				return fmt.Errorf("post caption does not contain required hashtag: %s", requiredHashtag)
+			}
+			return nil
+		}
+	}
+
+	return errors.New("Instagram post not found in creator's recent media")
+}
+
+func extractInstagramShortcode(postURL string) string {
+	// Handle https://www.instagram.com/p/{shortcode}/
+	parts := strings.Split(strings.TrimRight(postURL, "/"), "/")
+	for i, part := range parts {
+		if part == "p" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
 }

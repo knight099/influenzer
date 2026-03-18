@@ -43,10 +43,8 @@ func (h *JobHandler) GetFeed(c *gin.Context) {
 	var campaigns []domain.Campaign
 
 	query := h.db.Where("status = ?", domain.CampaignStatusOpen)
-	// Filter by niche if we add Niche to Campaign or derived
-	// For now just return all
 	if niche != "" {
-		// Mock filter
+		query = query.Where("niche ILIKE ?", "%"+niche+"%")
 	}
 
 	query.Find(&campaigns)
@@ -92,6 +90,7 @@ func (h *JobHandler) GetFeed(c *gin.Context) {
 			"title":        camp.Title,
 			"description":  camp.Description,
 			"budget":       camp.Budget,
+			"niche":        camp.Niche,
 			"platform":     camp.Platform,
 			"requirements": camp.Requirements,
 			"brand_name":   brandName,

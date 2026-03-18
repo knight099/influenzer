@@ -39,9 +39,10 @@ type User struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 
-	// Encrypted Tokens
-	InstagramToken string `json:"-"`
-	YoutubeToken   string `json:"-"`
+	// Tokens
+	InstagramToken      string `json:"-"`
+	YoutubeToken        string `json:"-"`
+	YoutubeRefreshToken string `json:"-"`
 
 	BrandProfile   *BrandProfile   `json:"brand_profile,omitempty"`
 	CreatorProfile *CreatorProfile `json:"creator_profile,omitempty"`
@@ -83,6 +84,7 @@ type Campaign struct {
 	Title        string                 `json:"title"`
 	Description  string                 `json:"description"`
 	Budget       float64                `json:"budget"`
+	Niche        string                 `json:"niche"`
 	Platform     string                 `json:"platform"` // e.g. "instagram", "youtube"
 	Requirements map[string]interface{} `gorm:"serializer:json" json:"requirements"`
 	Status       CampaignStatus         `gorm:"default:'OPEN'" json:"status"`

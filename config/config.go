@@ -11,6 +11,7 @@ type Config struct {
 	JWTSecret             string `mapstructure:"JWT_SECRET"`
 	RazorpayKeyID         string `mapstructure:"RAZORPAY_KEY_ID"`
 	RazorpayKeySecret     string `mapstructure:"RAZORPAY_KEY_SECRET"`
+	RazorpayWebhookSecret string `mapstructure:"RAZORPAY_WEBHOOK_SECRET"`
 	GoogleClientID        string `mapstructure:"GOOGLE_CLIENT_ID"`
 	GoogleClientSecret    string `mapstructure:"GOOGLE_CLIENT_SECRET"`
 	InstagramClientID     string `mapstructure:"INSTAGRAM_CLIENT_ID"`
@@ -29,6 +30,7 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("JWT_SECRET")
 	viper.BindEnv("RAZORPAY_KEY_ID")
 	viper.BindEnv("RAZORPAY_KEY_SECRET")
+	viper.BindEnv("RAZORPAY_WEBHOOK_SECRET")
 	viper.BindEnv("GOOGLE_CLIENT_ID")
 	viper.BindEnv("GOOGLE_CLIENT_SECRET")
 	viper.BindEnv("INSTAGRAM_CLIENT_ID")

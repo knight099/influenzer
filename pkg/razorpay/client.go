@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/razorpay/razorpay-go"
+	rzpUtils "github.com/razorpay/razorpay-go/utils"
 	"github.com/vaibhaw/influenzer-backend/config"
 )
 
@@ -16,15 +17,13 @@ type Client interface {
 }
 
 type razorpayClient struct {
-	client *razorpay.Client
+	client    *razorpay.Client
+	keySecret string
 }
 
 func NewRazorpayClient(cfg *config.Config) Client {
-	keyID := cfg.RazorpayKeyID
-	keySecret := cfg.RazorpayKeySecret
-
-	client := razorpay.NewClient(keyID, keySecret)
-	return &razorpayClient{client: client}
+	client := razorpay.NewClient(cfg.RazorpayKeyID, cfg.RazorpayKeySecret)
+	return &razorpayClient{client: client, keySecret: cfg.RazorpayKeySecret}
 }
 
 func (r *razorpayClient) CreateOrder(amount float64, currency string, receipt string, notes map[string]interface{}) (string, error) {
@@ -48,8 +47,13 @@ func (r *razorpayClient) CreateOrder(amount float64, currency string, receipt st
 }
 
 func (r *razorpayClient) VerifyPaymentSignature(orderID, paymentID, signature string) error {
-	// In a real app we use utils.VerifyPaymentSignature
-	// For now returning nil to satisfy interface/mock
+	params := map[string]interface{}{
+		"razorpay_order_id":   orderID,
+		"razorpay_payment_id": paymentID,
+	}
+	if !rzpUtils.VerifyPaymentSignature(params, signature, r.keySecret) {
+		return errors.New("invalid payment signature")
+	}
 	return nil
 }
 

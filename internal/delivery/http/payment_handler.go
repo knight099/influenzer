@@ -1,12 +1,15 @@
 package http
 
 import (
+	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	rzpUtils "github.com/razorpay/razorpay-go/utils"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
 	"github.com/vaibhaw/influenzer-backend/internal/service"
 	"github.com/vaibhaw/influenzer-backend/pkg/razorpay"
@@ -14,13 +17,14 @@ import (
 )
 
 type PaymentHandler struct {
-	service service.PaymentService
-	db      *gorm.DB
-	rzp     razorpay.Client
+	service       service.PaymentService
+	db            *gorm.DB
+	rzp           razorpay.Client
+	webhookSecret string
 }
 
-func NewPaymentHandler(r *gin.Engine, s service.PaymentService, authMiddleware gin.HandlerFunc, db *gorm.DB, rzp razorpay.Client) {
-	handler := &PaymentHandler{service: s, db: db, rzp: rzp}
+func NewPaymentHandler(r *gin.Engine, s service.PaymentService, authMiddleware gin.HandlerFunc, db *gorm.DB, rzp razorpay.Client, webhookSecret string) {
+	handler := &PaymentHandler{service: s, db: db, rzp: rzp, webhookSecret: webhookSecret}
 
 	// Payments Group
 	p := r.Group("/payments")
@@ -45,33 +49,12 @@ func NewPaymentHandler(r *gin.Engine, s service.PaymentService, authMiddleware g
 	r.POST("/payments/webhook", handler.Webhook)
 }
 
-// Structs matching spec
+// createOrderRequest accepts either proposal_id (preferred) or campaign_id (legacy alias)
 type createOrderRequest struct {
 	Amount     float64 `json:"amount" binding:"required"`
 	Currency   string  `json:"currency"`
-	CampaignID string  `json:"campaign_id"` // Spec says campaign_id but usually we link to Proposal?
-	// Spec: { "amount": 25000, "currency": "INR", "campaign_id": "..." }
-	// My Logic was: Proposal has Bid Amount.
-	// If frontend sends Amount, we must validate it matches Proposal or Campaign?
-	// Let's assume this creates an order for the *Proposal* linked to this User+Campaign?
-	// Or maybe User selects a Proposal ID?
-	// Let's assume for now, we use Proposal ID passed as CampaignID or logic derives it.
-	// Actually, earlier CreateEscrow took "proposal_id".
-	// The Spec sending "campaign_id" implies Funding the Campaign Wallet?
-	// OR Funding a specific milestone?
-	// "Create Razorpay Order" usually means "Load Money" or "Pay for Asset".
-	// Let's keep `proposal_id` logic but maybe check if request param name is flexible?
-	// I'll stick to my internal logic (Proposal ID) but map request fields if possible.
-	// If frontend sends `campaign_id`, I need to know WHICH proposal?
-	// Maybe "Pay for Campaign" = Bulk fund?
-	// I will assume for now checking ProposalID is safer.
-	// I'll expect `proposal_id` in body, ignoring spec divergence slightly unless strict.
-	// Spec: { "campaign_id": "..." }.
-	// Okay, if Spec says CampaignID, maybe Brand is depositing budget into Campaign Wallet?
-	// Let's implement depositing to Brand Wallet?
-	// Or funding the escrow for the generic campaign?
-	// Let's stick to Proposal Escrow but allow `proposal_id` input key.
-	ProposalID string `json:"proposal_id"`
+	CampaignID string  `json:"campaign_id"` // legacy alias for proposal_id
+	ProposalID string  `json:"proposal_id"`
 }
 
 func (h *PaymentHandler) CreateOrder(c *gin.Context) {
@@ -301,48 +284,25 @@ func (h *PaymentHandler) SubscriptionStatus(c *gin.Context) {
 	})
 }
 
-// Webhook payload from Razorpay
+// Webhook handles server-to-server Razorpay events
 func (h *PaymentHandler) Webhook(c *gin.Context) {
-	// Need to parse body to get order_id, payment_id and signature
-	// Razorpay sends signature in Header "X-Razorpay-Signature"
-	c.GetHeader("X-Razorpay-Signature") // signature
+	rawBody, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read body"})
+		return
+	}
 
-	// Payload is JSON. We need to parse it to extracted entities.
-	// Structure: payload.payment.entity.id, payload.order.entity.id
-	// Or standard webhook structure.
-	// For simplicity, I'll bind to a generic map or struct.
-	// NOTE: VerifySignature needs ROT body.
-	// Since Gin CreateEscrow reads body, we might need to cache it if we want to read it twice or just read bytes.
-
-	// Actually, `VerifyPaymentSignature` usually verifies the callback from the Checkout form, NOT the Webhook!
-	// The Webhook signature verification is DIFFERENT.
-	// `VerifyPaymentSignature` is for `razorpay_payment_id`, `razorpay_order_id`, `razorpay_signature` sent by the CLIENT after success.
-	// The USER REQUEST says: "POST /payments/webhook: Listen for payment.captured. Action: Update Proposal Status to FUNDED."
-	// USUALLY Webhook is for async.
-	// The REQUIREMENT says: "POST /payments/webhook ... Update Proposal Status".
-	// ALSO the CLIENT might send success to backend?
-	// The `HandlePaymentSuccess` I implemented uses `VerifyPaymentSignature`. This suggests it's for the Client Callback Flow (Checkout -> Success -> POST to Backend).
-	// If the user wants a WEBHOOK, that's Server-to-Server.
-	// The Requirement says "POST /payments/webhook".
-	// Let's assume the user confusingly meant the "Payment Success Callback" from frontend OR actual Webhook.
-	// Using "webhook" path suggests Webhook.
-	// BUT `VerifyPaymentSignature` (as I implemented) takes `orderID, paymentID, signature`. This is characteristic of Client Callback.
-	// Webhook signature validation uses the Webhook Secret.
-
-	// I will implement TWO endpoints?
-	// 1. `/payments/callback` calls `HandlePaymentSuccess` (Client side trigger)
-	// 2. `/payments/webhook` (Server side trigger).
-
-	// However, looking at the user request: "POST /payments/webhook: Listen for payment.captured"
-	// This implies real webhook.
-	// But `HandlePaymentSuccess` in Service uses `VerifyPaymentSignature` which matches Client Flow.
-	// I will implement `Webhook` to handle the actual Webhook event.
-
-	// I'll skip Webhook signature verification for now (or trivial check) as I don't have the secret setup in Env.
-	// I'll parse the payload to extract Order ID and mark as Funded.
+	// Verify webhook signature when secret is configured
+	if h.webhookSecret != "" {
+		sig := c.GetHeader("X-Razorpay-Signature")
+		if !rzpUtils.VerifyWebhookSignature(string(rawBody), sig, h.webhookSecret) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid webhook signature"})
+			return
+		}
+	}
 
 	var payload map[string]interface{}
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
 		return
 	}
