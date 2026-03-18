@@ -1,0 +1,160 @@
+name: Deploy to AWS App Runner
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: influenzer-backend
+  APP_RUNNER_SERVICE: influenzer-backend
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create ECR repository if not exists
+        run: |
+          aws ecr describe-repositories \
+            --repository-names $ECR_REPOSITORY \
+            --region $AWS_REGION 2>/dev/null || \
+          aws ecr create-repository \
+            --repository-name $ECR_REPOSITORY \
+            --region $AWS_REGION
+
+      - name: Build, tag, and push image to ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA"
+          docker build -t "$IMAGE_URI" -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" .
+          docker push "$IMAGE_URI"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      - name: Create App Runner IAM access role if not exists
+        id: iam-role
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ROLE_NAME="AppRunnerECRAccessRole"
+          ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
+
+          aws iam get-role --role-name "$ROLE_NAME" 2>/dev/null || \
+          (aws iam create-role \
+            --role-name "$ROLE_NAME" \
+            --assume-role-policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Principal": { "Service": "build.apprunner.amazonaws.com" },
+                "Action": "sts:AssumeRole"
+              }]
+            }' && \
+          aws iam attach-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-arn arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess)
+
+          echo "role_arn=$ROLE_ARN" >> $GITHUB_OUTPUT
+
+      - name: Deploy to App Runner
+        env:
+          IMAGE_URI: ${{ steps.build-image.outputs.image_uri }}
+          ACCESS_ROLE_ARN: ${{ steps.iam-role.outputs.role_arn }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          INSTAGRAM_CLIENT_ID: ${{ secrets.INSTAGRAM_CLIENT_ID }}
+          INSTAGRAM_CLIENT_SECRET: ${{ secrets.INSTAGRAM_CLIENT_SECRET }}
+          INSTAGRAM_REDIRECT_URI: ${{ secrets.INSTAGRAM_REDIRECT_URI }}
+        run: |
+          # Build source config JSON safely using jq (handles special chars in secrets)
+          SOURCE_CONFIG=$(jq -n \
+            --arg image    "$IMAGE_URI" \
+            --arg role     "$ACCESS_ROLE_ARN" \
+            --arg db       "$DATABASE_URL" \
+            --arg jwt      "$JWT_SECRET" \
+            --arg rzp_id   "$RAZORPAY_KEY_ID" \
+            --arg rzp_sec  "$RAZORPAY_KEY_SECRET" \
+            --arg rzp_hook "$RAZORPAY_WEBHOOK_SECRET" \
+            --arg g_id     "$GOOGLE_CLIENT_ID" \
+            --arg g_sec    "$GOOGLE_CLIENT_SECRET" \
+            --arg ig_id    "$INSTAGRAM_CLIENT_ID" \
+            --arg ig_sec   "$INSTAGRAM_CLIENT_SECRET" \
+            --arg ig_uri   "$INSTAGRAM_REDIRECT_URI" \
+            '{
+              ImageRepository: {
+                ImageIdentifier: $image,
+                ImageConfiguration: {
+                  Port: "8080",
+                  RuntimeEnvironmentVariables: {
+                    ENVIRONMENT:             "production",
+                    PORT:                    "8080",
+                    DATABASE_URL:            $db,
+                    JWT_SECRET:              $jwt,
+                    RAZORPAY_KEY_ID:         $rzp_id,
+                    RAZORPAY_KEY_SECRET:     $rzp_sec,
+                    RAZORPAY_WEBHOOK_SECRET: $rzp_hook,
+                    GOOGLE_CLIENT_ID:        $g_id,
+                    GOOGLE_CLIENT_SECRET:    $g_sec,
+                    INSTAGRAM_CLIENT_ID:     $ig_id,
+                    INSTAGRAM_CLIENT_SECRET: $ig_sec,
+                    INSTAGRAM_REDIRECT_URI:  $ig_uri
+                  }
+                },
+                ImageRepositoryType: "ECR"
+              },
+              AuthenticationConfiguration: {
+                AccessRoleArn: $role
+              },
+              AutoDeploymentsEnabled: true
+            }')
+
+          SERVICE_ARN=$(aws apprunner list-services \
+            --region $AWS_REGION \
+            --query "ServiceSummaryList[?ServiceName=='$APP_RUNNER_SERVICE'].ServiceArn" \
+            --output text)
+
+          if [ -z "$SERVICE_ARN" ]; then
+            echo "Creating new App Runner service..."
+            aws apprunner create-service \
+              --service-name "$APP_RUNNER_SERVICE" \
+              --region "$AWS_REGION" \
+              --source-configuration "$SOURCE_CONFIG" \
+              --instance-configuration '{"Cpu":"0.25 vCPU","Memory":"0.5 GB"}' \
+              --health-check-configuration '{"Protocol":"HTTP","Path":"/health","Interval":10,"Timeout":5,"HealthyThreshold":1,"UnhealthyThreshold":5}'
+          else
+            echo "Updating existing App Runner service ($SERVICE_ARN)..."
+            aws apprunner update-service \
+              --service-arn "$SERVICE_ARN" \
+              --region "$AWS_REGION" \
+              --source-configuration "$SOURCE_CONFIG"
+          fi
+
+      - name: Print App Runner URL
+        run: |
+          SERVICE_URL=$(aws apprunner list-services \
+            --region $AWS_REGION \
+            --query "ServiceSummaryList[?ServiceName=='$APP_RUNNER_SERVICE'].ServiceUrl" \
+            --output text)
+          echo "App Runner URL: https://$SERVICE_URL"
