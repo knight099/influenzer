@@ -15,17 +15,18 @@ import (
 
 // CreatorMediaItem is a unified media item returned for both Instagram and YouTube.
 type CreatorMediaItem struct {
-	Platform    string `json:"platform"`
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Caption     string `json:"caption"`
+	Platform     string `json:"platform"`
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	Caption      string `json:"caption"`
 	ThumbnailURL string `json:"thumbnail_url"`
-	MediaURL    string `json:"media_url"`
-	Permalink   string `json:"permalink"`
-	MediaType   string `json:"media_type"` // VIDEO, IMAGE, CAROUSEL_ALBUM, YOUTUBE
-	ViewCount   int64  `json:"view_count"`
-	LikeCount   int64  `json:"like_count"`
-	PublishedAt string `json:"published_at"`
+	MediaURL     string `json:"media_url"`
+	Permalink    string `json:"permalink"`
+	MediaType    string `json:"media_type"` // VIDEO, IMAGE, CAROUSEL_ALBUM, YOUTUBE
+	ViewCount    int64  `json:"view_count"`
+	LikeCount    int64  `json:"like_count"`
+	CommentCount int64  `json:"comment_count"`
+	PublishedAt  string `json:"published_at"`
 }
 
 type CreatorHandler struct {
@@ -352,35 +353,74 @@ func (h *CreatorHandler) GetAnalytics(c *gin.Context) {
 	// ── Instagram analytics ──────────────────────────────────────────────────
 	if igData, ok := profile.CachedStats["instagram"].(map[string]interface{}); ok {
 		igFollowers := toInt64(igData["followers_count"])
+		igFollowing := toInt64(igData["follows_count"])
 		igMediaCount := toInt64(igData["media_count"])
+		igUserID, _ := igData["id"].(string)
 
 		igAnalytics := map[string]interface{}{
 			"followers":   igFollowers,
+			"following":   igFollowing,
 			"media_count": igMediaCount,
 			"tier":        creatorTier(igFollowers),
 		}
 
-		// Fetch recent media for engagement computation
 		if user.InstagramToken != "" {
+			// Fetch recent 20 posts with likes, views, comments
 			if items, err := h.fetchInstagramMedia(user.InstagramToken, 20); err == nil && len(items) > 0 {
-				var totalViews, totalLikes int64
+				var totalViews, totalLikes, totalComments int64
 				for _, item := range items {
 					totalViews += item.ViewCount
 					totalLikes += item.LikeCount
+					totalComments += item.CommentCount
 				}
 				count := int64(len(items))
 				avgViews := totalViews / count
 				avgLikes := totalLikes / count
+				avgComments := totalComments / count
 
+				// Engagement rate = (avg_likes + avg_comments) / followers * 100
 				var engRate float64
 				if igFollowers > 0 {
-					engRate = float64(avgLikes+avgViews) / float64(igFollowers) * 100
+					engRate = float64(avgLikes+avgComments) / float64(igFollowers) * 100
 				}
 
 				igAnalytics["avg_views"]       = avgViews
 				igAnalytics["avg_likes"]       = avgLikes
+				igAnalytics["avg_comments"]    = avgComments
 				igAnalytics["engagement_rate"] = fmt.Sprintf("%.2f", engRate)
 				igAnalytics["posts_analyzed"]  = count
+
+				// Per-post insights: fetch shares, saves, reach for first 10 posts
+				sampleSize := 10
+				if len(items) < sampleSize {
+					sampleSize = len(items)
+				}
+				var totalShares, totalSaves, totalReach int64
+				fetched := 0
+				for i := 0; i < sampleSize; i++ {
+					reach, shares, saves, ok := h.fetchInstagramPostInsights(user.InstagramToken, items[i].ID)
+					if ok {
+						totalReach += reach
+						totalShares += shares
+						totalSaves += saves
+						fetched++
+					}
+				}
+				if fetched > 0 {
+					n := int64(fetched)
+					igAnalytics["avg_reach"]  = totalReach / n
+					igAnalytics["avg_shares"] = totalShares / n
+					igAnalytics["avg_saves"]  = totalSaves / n
+				}
+			}
+
+			// Account-level 28-day insights: reach, impressions, profile views
+			if igUserID != "" {
+				if reach28d, impressions28d, profileViews28d, err := h.fetchInstagramAccountInsights(user.InstagramToken, igUserID); err == nil {
+					if reach28d > 0 { igAnalytics["reach_28d"] = reach28d }
+					if impressions28d > 0 { igAnalytics["impressions_28d"] = impressions28d }
+					if profileViews28d > 0 { igAnalytics["profile_views_28d"] = profileViews28d }
+				}
 			}
 		}
 		analytics["instagram"] = igAnalytics
@@ -393,30 +433,34 @@ func (h *CreatorHandler) GetAnalytics(c *gin.Context) {
 		ytTotalViews := toInt64FromStr(fmt.Sprintf("%v", ytData["view_count"]))
 
 		ytAnalytics := map[string]interface{}{
-			"subscribers":  ytSubs,
-			"video_count":  ytVideos,
-			"total_views":  ytTotalViews,
-			"tier":         creatorTier(ytSubs),
+			"subscribers": ytSubs,
+			"video_count": ytVideos,
+			"total_views": ytTotalViews,
+			"tier":        creatorTier(ytSubs),
 		}
 
 		if user.YoutubeToken != "" {
 			if items, err := h.fetchYouTubeVideos(user.YoutubeToken, 20); err == nil && len(items) > 0 {
-				var totalViews, totalLikes int64
+				var totalViews, totalLikes, totalComments int64
 				for _, item := range items {
 					totalViews += item.ViewCount
 					totalLikes += item.LikeCount
+					totalComments += item.CommentCount
 				}
 				count := int64(len(items))
 				avgViews := totalViews / count
 				avgLikes := totalLikes / count
+				avgComments := totalComments / count
 
+				// Engagement rate = (avg_likes + avg_comments) / subscribers * 100
 				var engRate float64
 				if ytSubs > 0 {
-					engRate = float64(avgLikes+avgViews) / float64(ytSubs) * 100
+					engRate = float64(avgLikes+avgComments) / float64(ytSubs) * 100
 				}
 
 				ytAnalytics["avg_views"]       = avgViews
 				ytAnalytics["avg_likes"]       = avgLikes
+				ytAnalytics["avg_comments"]    = avgComments
 				ytAnalytics["engagement_rate"] = fmt.Sprintf("%.2f", engRate)
 				ytAnalytics["videos_analyzed"] = count
 			}
@@ -859,23 +903,117 @@ func (h *CreatorHandler) GetCreatorMedia(c *gin.Context) {
 
 type igMediaListResponse struct {
 	Data []struct {
-		ID           string `json:"id"`
-		Caption      string `json:"caption"`
-		MediaType    string `json:"media_type"`
-		MediaURL     string `json:"media_url"`
-		ThumbnailURL string `json:"thumbnail_url"`
-		Permalink    string `json:"permalink"`
-		Timestamp    string `json:"timestamp"`
-		VideoViews   int64  `json:"video_views"`
-		LikeCount    int64  `json:"like_count"`
+		ID            string `json:"id"`
+		Caption       string `json:"caption"`
+		MediaType     string `json:"media_type"`
+		MediaURL      string `json:"media_url"`
+		ThumbnailURL  string `json:"thumbnail_url"`
+		Permalink     string `json:"permalink"`
+		Timestamp     string `json:"timestamp"`
+		VideoViews    int64  `json:"video_views"`
+		LikeCount     int64  `json:"like_count"`
+		CommentsCount int64  `json:"comments_count"`
 	} `json:"data"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
+type igInsightsResponse struct {
+	Data []struct {
+		Name   string `json:"name"`
+		Period string `json:"period"`
+		Values []struct {
+			Value int64 `json:"value"`
+		} `json:"values"`
+	} `json:"data"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// fetchInstagramAccountInsights fetches 28-day reach, impressions, profile_views
+func (h *CreatorHandler) fetchInstagramAccountInsights(accessToken, userID string) (reach, impressions, profileViews int64, err error) {
+	url := fmt.Sprintf(
+		"https://graph.instagram.com/%s/insights?metric=reach,impressions,profile_views&period=days_28&access_token=%s",
+		userID, accessToken,
+	)
+	resp, e := http.Get(url) //nolint:noctx
+	if e != nil {
+		return 0, 0, 0, e
+	}
+	defer resp.Body.Close()
+	body, e := io.ReadAll(resp.Body)
+	if e != nil {
+		return 0, 0, 0, e
+	}
+	var ins igInsightsResponse
+	if e := json.Unmarshal(body, &ins); e != nil {
+		return 0, 0, 0, e
+	}
+	if ins.Error != nil {
+		return 0, 0, 0, fmt.Errorf("Instagram insights error: %s", ins.Error.Message)
+	}
+	for _, d := range ins.Data {
+		if len(d.Values) == 0 {
+			continue
+		}
+		v := d.Values[0].Value
+		switch d.Name {
+		case "reach":
+			reach = v
+		case "impressions":
+			impressions = v
+		case "profile_views":
+			profileViews = v
+		}
+	}
+	return
+}
+
+// fetchInstagramPostInsights fetches per-post reach, shares, saved for a single media item.
+// Returns (reach, shares, saves, ok). ok=false if the API call fails (e.g. not a business account).
+func (h *CreatorHandler) fetchInstagramPostInsights(accessToken, mediaID string) (reach, shares, saves int64, ok bool) {
+	url := fmt.Sprintf(
+		"https://graph.instagram.com/%s/insights?metric=reach,shares,saved&access_token=%s",
+		mediaID, accessToken,
+	)
+	resp, err := http.Get(url) //nolint:noctx
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+	var ins igInsightsResponse
+	if err := json.Unmarshal(body, &ins); err != nil {
+		return
+	}
+	if ins.Error != nil {
+		return
+	}
+	for _, d := range ins.Data {
+		if len(d.Values) == 0 {
+			continue
+		}
+		v := d.Values[0].Value
+		switch d.Name {
+		case "reach":
+			reach = v
+		case "shares":
+			shares = v
+		case "saved":
+			saves = v
+		}
+	}
+	ok = true
+	return
+}
+
 func (h *CreatorHandler) fetchInstagramMedia(accessToken string, limit int) ([]CreatorMediaItem, error) {
-	fields := "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,video_views,like_count"
+	fields := "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,video_views,like_count,comments_count"
 	url := fmt.Sprintf(
 		"https://graph.instagram.com/me/media?fields=%s&limit=%d&access_token=%s",
 		fields, limit, accessToken,
@@ -926,6 +1064,7 @@ func (h *CreatorHandler) fetchInstagramMedia(accessToken string, limit int) ([]C
 			MediaType:    m.MediaType,
 			ViewCount:    m.VideoViews,
 			LikeCount:    m.LikeCount,
+			CommentCount: m.CommentsCount,
 			PublishedAt:  m.Timestamp,
 		})
 	}
@@ -973,10 +1112,11 @@ type ytPlaylistItemsResponse struct {
 
 type ytVideosResponse struct {
 	Items []struct {
-		ID      string `json:"id"`
+		ID         string `json:"id"`
 		Statistics struct {
-			ViewCount string `json:"viewCount"`
-			LikeCount string `json:"likeCount"`
+			ViewCount    string `json:"viewCount"`
+			LikeCount    string `json:"likeCount"`
+			CommentCount string `json:"commentCount"`
 		} `json:"statistics"`
 	} `json:"items"`
 	Error *struct {
@@ -1085,14 +1225,16 @@ func (h *CreatorHandler) fetchYouTubeVideos(accessToken string, limit int) ([]Cr
 
 	// index statistics by video ID
 	type videoStats struct {
-		viewCount string
-		likeCount string
+		viewCount    string
+		likeCount    string
+		commentCount string
 	}
 	statsByID := make(map[string]videoStats, len(vidResp.Items))
 	for _, v := range vidResp.Items {
 		statsByID[v.ID] = videoStats{
-			viewCount: v.Statistics.ViewCount,
-			likeCount: v.Statistics.LikeCount,
+			viewCount:    v.Statistics.ViewCount,
+			likeCount:    v.Statistics.LikeCount,
+			commentCount: v.Statistics.CommentCount,
 		}
 	}
 
@@ -1112,6 +1254,7 @@ func (h *CreatorHandler) fetchYouTubeVideos(accessToken string, limit int) ([]Cr
 			MediaType:    "YOUTUBE",
 			ViewCount:    parseCount(st.viewCount),
 			LikeCount:    parseCount(st.likeCount),
+			CommentCount: parseCount(st.commentCount),
 			PublishedAt:  sn.publishedAt,
 		})
 	}
