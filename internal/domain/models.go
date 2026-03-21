@@ -69,6 +69,14 @@ type CreatorProfile struct {
 	Phone              string    `json:"phone"`
 	Platform           string    `json:"platform"` // e.g. "instagram", "youtube"
 	RazorpayAccountID  string    `json:"razorpay_account_id"`
+	// Extended profile fields
+	Bio               string                 `gorm:"type:text" json:"bio"`
+	Languages         string                 `json:"languages"`         // Comma separated e.g. "Hindi,English"
+	YearsExperience   int                    `json:"years_experience"`
+	ContentCategories string                 `gorm:"type:text" json:"content_categories"` // Comma separated
+	PastBrands        string                 `gorm:"type:text" json:"past_brands"`        // Comma separated brand names
+	RateCard          map[string]interface{} `gorm:"serializer:json" json:"rate_card"`    // per_post, per_reel, per_video
+	SocialLinks       map[string]interface{} `gorm:"serializer:json" json:"social_links"` // twitter, linkedin, website
 	// JSONB for stats
 	CachedStats map[string]interface{} `gorm:"serializer:json" json:"cached_stats"`
 	Portfolio   map[string]interface{} `gorm:"serializer:json" json:"portfolio"` // Store video links

@@ -50,7 +50,11 @@ func NewCreatorHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFun
 	{
 		apiGroup.GET("/profile", handler.GetMyProfile)
 		apiGroup.POST("/refresh-stats", handler.RefreshStats)
+		apiGroup.PUT("/profile", handler.UpdateProfile)
 	}
+
+	// Add analytics endpoint
+	g.GET("/:id/analytics", handler.GetAnalytics)
 }
 
 func (h *CreatorHandler) Search(c *gin.Context) {
@@ -148,6 +152,15 @@ func (h *CreatorHandler) Search(c *gin.Context) {
 			// Additional info
 			"avatar_url":   cp.User.AvatarURL,
 			"cached_stats": cp.CachedStats,
+
+			// Extended profile
+			"bio":                cp.Bio,
+			"languages":          cp.Languages,
+			"years_experience":   cp.YearsExperience,
+			"content_categories": cp.ContentCategories,
+			"past_brands":        cp.PastBrands,
+			"rate_card":          cp.RateCard,
+			"social_links":       cp.SocialLinks,
 		}
 
 		response = append(response, creatorData)
@@ -234,21 +247,219 @@ func (h *CreatorHandler) Spotlight(c *gin.Context) {
 func (h *CreatorHandler) GetProfile(c *gin.Context) {
 	id := c.Param("id")
 	var profile domain.CreatorProfile
-	if err := h.db.Where("user_id = ?", id).First(&profile).Error; err != nil {
+	if err := h.db.Where("user_id = ?", id).Preload("User").First(&profile).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Creator not found"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"id":          profile.UserID,
-		"niche":       profile.Niche,
-		"min_budget":  profile.MinBudget,
-		"city":        profile.City,
-		"platform":    profile.Platform,
-		"portfolio":   profile.Portfolio,
-		"cached_stats": profile.CachedStats,
-		"reviews":     []string{},
+		"id":                 profile.UserID,
+		"name":               profile.User.Name,
+		"email":              profile.User.Email,
+		"avatar_url":         profile.User.AvatarURL,
+		"niche":              profile.Niche,
+		"min_budget":         profile.MinBudget,
+		"city":               profile.City,
+		"platform":           profile.Platform,
+		"portfolio":          profile.Portfolio,
+		"cached_stats":       profile.CachedStats,
+		"reviews":            []string{},
+		"bio":                profile.Bio,
+		"languages":          profile.Languages,
+		"years_experience":   profile.YearsExperience,
+		"content_categories": profile.ContentCategories,
+		"past_brands":        profile.PastBrands,
+		"rate_card":          profile.RateCard,
+		"social_links":       profile.SocialLinks,
 	})
+}
+
+type updateProfileRequest struct {
+	Bio               string                 `json:"bio"`
+	Languages         string                 `json:"languages"`
+	YearsExperience   int                    `json:"years_experience"`
+	ContentCategories string                 `json:"content_categories"`
+	PastBrands        string                 `json:"past_brands"`
+	RateCard          map[string]interface{} `json:"rate_card"`
+	SocialLinks       map[string]interface{} `json:"social_links"`
+	Niche             string                 `json:"niche"`
+	MinBudget         float64                `json:"min_budget"`
+	City              string                 `json:"city"`
+	Platform          string                 `json:"platform"`
+	Phone             string                 `json:"phone"`
+}
+
+func (h *CreatorHandler) UpdateProfile(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req updateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var profile domain.CreatorProfile
+	result := h.db.Where("user_id = ?", userID).First(&profile)
+	if result.Error != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Creator profile not found"})
+		return
+	}
+
+	// Update only provided fields
+	if req.Bio != "" { profile.Bio = req.Bio }
+	if req.Languages != "" { profile.Languages = req.Languages }
+	if req.YearsExperience > 0 { profile.YearsExperience = req.YearsExperience }
+	if req.ContentCategories != "" { profile.ContentCategories = req.ContentCategories }
+	if req.PastBrands != "" { profile.PastBrands = req.PastBrands }
+	if req.RateCard != nil { profile.RateCard = req.RateCard }
+	if req.SocialLinks != nil { profile.SocialLinks = req.SocialLinks }
+	if req.Niche != "" { profile.Niche = req.Niche }
+	if req.MinBudget > 0 { profile.MinBudget = req.MinBudget }
+	if req.City != "" { profile.City = req.City }
+	if req.Platform != "" { profile.Platform = req.Platform }
+	if req.Phone != "" { profile.Phone = req.Phone }
+
+	if err := h.db.Save(&profile).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Profile updated"})
+}
+
+// GetAnalytics computes engagement metrics from cached stats and recent media
+func (h *CreatorHandler) GetAnalytics(c *gin.Context) {
+	creatorID := c.Param("id")
+
+	var user domain.User
+	if err := h.db.Preload("CreatorProfile").Where("id = ?", creatorID).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Creator not found"})
+		return
+	}
+
+	profile := user.CreatorProfile
+	if profile == nil || profile.CachedStats == nil {
+		c.JSON(http.StatusOK, gin.H{"available": false})
+		return
+	}
+
+	analytics := map[string]interface{}{"available": true}
+
+	// ── Instagram analytics ──────────────────────────────────────────────────
+	if igData, ok := profile.CachedStats["instagram"].(map[string]interface{}); ok {
+		igFollowers := toInt64(igData["followers_count"])
+		igMediaCount := toInt64(igData["media_count"])
+
+		igAnalytics := map[string]interface{}{
+			"followers":   igFollowers,
+			"media_count": igMediaCount,
+			"tier":        creatorTier(igFollowers),
+		}
+
+		// Fetch recent media for engagement computation
+		if user.InstagramToken != "" {
+			if items, err := h.fetchInstagramMedia(user.InstagramToken, 20); err == nil && len(items) > 0 {
+				var totalViews, totalLikes int64
+				for _, item := range items {
+					totalViews += item.ViewCount
+					totalLikes += item.LikeCount
+				}
+				count := int64(len(items))
+				avgViews := totalViews / count
+				avgLikes := totalLikes / count
+
+				var engRate float64
+				if igFollowers > 0 {
+					engRate = float64(avgLikes+avgViews) / float64(igFollowers) * 100
+				}
+
+				igAnalytics["avg_views"]       = avgViews
+				igAnalytics["avg_likes"]       = avgLikes
+				igAnalytics["engagement_rate"] = fmt.Sprintf("%.2f", engRate)
+				igAnalytics["posts_analyzed"]  = count
+			}
+		}
+		analytics["instagram"] = igAnalytics
+	}
+
+	// ── YouTube analytics ────────────────────────────────────────────────────
+	if ytData, ok := profile.CachedStats["youtube"].(map[string]interface{}); ok {
+		ytSubs := toInt64FromStr(fmt.Sprintf("%v", ytData["subscriber_count"]))
+		ytVideos := toInt64FromStr(fmt.Sprintf("%v", ytData["video_count"]))
+		ytTotalViews := toInt64FromStr(fmt.Sprintf("%v", ytData["view_count"]))
+
+		ytAnalytics := map[string]interface{}{
+			"subscribers":  ytSubs,
+			"video_count":  ytVideos,
+			"total_views":  ytTotalViews,
+			"tier":         creatorTier(ytSubs),
+		}
+
+		if user.YoutubeToken != "" {
+			if items, err := h.fetchYouTubeVideos(user.YoutubeToken, 20); err == nil && len(items) > 0 {
+				var totalViews, totalLikes int64
+				for _, item := range items {
+					totalViews += item.ViewCount
+					totalLikes += item.LikeCount
+				}
+				count := int64(len(items))
+				avgViews := totalViews / count
+				avgLikes := totalLikes / count
+
+				var engRate float64
+				if ytSubs > 0 {
+					engRate = float64(avgLikes+avgViews) / float64(ytSubs) * 100
+				}
+
+				ytAnalytics["avg_views"]       = avgViews
+				ytAnalytics["avg_likes"]       = avgLikes
+				ytAnalytics["engagement_rate"] = fmt.Sprintf("%.2f", engRate)
+				ytAnalytics["videos_analyzed"] = count
+			}
+		}
+		analytics["youtube"] = ytAnalytics
+	}
+
+	c.JSON(http.StatusOK, analytics)
+}
+
+func creatorTier(followers int64) string {
+	switch {
+	case followers >= 1_000_000:
+		return "Mega"
+	case followers >= 100_000:
+		return "Macro"
+	case followers >= 10_000:
+		return "Micro"
+	default:
+		return "Nano"
+	}
+}
+
+func toInt64(v interface{}) int64 {
+	switch val := v.(type) {
+	case int:
+		return int64(val)
+	case int64:
+		return val
+	case float64:
+		return int64(val)
+	case string:
+		var n int64
+		fmt.Sscanf(val, "%d", &n)
+		return n
+	}
+	return 0
+}
+
+func toInt64FromStr(s string) int64 {
+	var n int64
+	fmt.Sscanf(s, "%d", &n)
+	return n
 }
 
 // GetMyProfile returns the authenticated user's creator profile
