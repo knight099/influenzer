@@ -44,14 +44,28 @@ func NewBrandHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFunc)
 		apiGroup.PUT("/profile", handler.UpdateProfile)
 		apiGroup.GET("/profile", handler.GetProfile)
 	}
+
+	// Public brand profile — accessible to creators
+	r.Group("/api/brands").Use(authMiddleware).GET("/:id", handler.GetPublicProfile)
 }
 
 type updateBrandProfileRequest struct {
-	BrandName     string `json:"brand_name"`
-	ContactName   string `json:"contact_name"`
-	Phone         string `json:"phone"`
-	RoleInCompany string `json:"role_in_company"`
-	Website       string `json:"website"`
+	BrandName         string `json:"brand_name"`
+	ContactName       string `json:"contact_name"`
+	Phone             string `json:"phone"`
+	RoleInCompany     string `json:"role_in_company"`
+	Website           string `json:"website"`
+	Industry          string `json:"industry"`
+	Description       string `json:"description"`
+	FoundedYear       int    `json:"founded_year"`
+	CompanySize       string `json:"company_size"`
+	Headquarters      string `json:"headquarters"`
+	InstagramURL      string `json:"instagram_url"`
+	TwitterURL        string `json:"twitter_url"`
+	LinkedinURL       string `json:"linkedin_url"`
+	ProductCategories string `json:"product_categories"`
+	TargetAudience    string `json:"target_audience"`
+	CampaignTypes     string `json:"campaign_types"`
 }
 
 // UpdateProfile godoc
@@ -105,13 +119,24 @@ func (h *BrandHandler) UpdateProfile(c *gin.Context) {
 	if err == gorm.ErrRecordNotFound {
 		// Create new profile
 		profile = domain.BrandProfile{
-			UserID:        user.ID,
-			CompanyName:   req.BrandName,
-			ContactName:   req.ContactName,
-			Phone:         req.Phone,
-			RoleInCompany: req.RoleInCompany,
-			Website:       req.Website,
-			LogoURL:       logoURL,
+			UserID:            user.ID,
+			CompanyName:       req.BrandName,
+			ContactName:       req.ContactName,
+			Phone:             req.Phone,
+			RoleInCompany:     req.RoleInCompany,
+			Website:           req.Website,
+			LogoURL:           logoURL,
+			Industry:          req.Industry,
+			Description:       req.Description,
+			FoundedYear:       req.FoundedYear,
+			CompanySize:       req.CompanySize,
+			Headquarters:      req.Headquarters,
+			InstagramURL:      req.InstagramURL,
+			TwitterURL:        req.TwitterURL,
+			LinkedinURL:       req.LinkedinURL,
+			ProductCategories: req.ProductCategories,
+			TargetAudience:    req.TargetAudience,
+			CampaignTypes:     req.CampaignTypes,
 		}
 		if err := h.db.Create(&profile).Error; err != nil {
 			utils.Logger.Error("Failed to create brand profile: " + err.Error())
@@ -130,6 +155,17 @@ func (h *BrandHandler) UpdateProfile(c *gin.Context) {
 		profile.RoleInCompany = req.RoleInCompany
 		profile.Website = req.Website
 		profile.LogoURL = logoURL
+		if req.Industry != "" { profile.Industry = req.Industry }
+		if req.Description != "" { profile.Description = req.Description }
+		if req.FoundedYear > 0 { profile.FoundedYear = req.FoundedYear }
+		if req.CompanySize != "" { profile.CompanySize = req.CompanySize }
+		if req.Headquarters != "" { profile.Headquarters = req.Headquarters }
+		if req.InstagramURL != "" { profile.InstagramURL = req.InstagramURL }
+		if req.TwitterURL != "" { profile.TwitterURL = req.TwitterURL }
+		if req.LinkedinURL != "" { profile.LinkedinURL = req.LinkedinURL }
+		if req.ProductCategories != "" { profile.ProductCategories = req.ProductCategories }
+		if req.TargetAudience != "" { profile.TargetAudience = req.TargetAudience }
+		if req.CampaignTypes != "" { profile.CampaignTypes = req.CampaignTypes }
 
 		if err := h.db.Save(&profile).Error; err != nil {
 			utils.Logger.Error("Failed to update brand profile: " + err.Error())
@@ -197,19 +233,61 @@ func (h *BrandHandler) GetProfile(c *gin.Context) {
 
 	// Response with profile and subscription info
 	c.JSON(http.StatusOK, gin.H{
-		"user_id":          profile.UserID,
-		"company_name":     profile.CompanyName,
-		"contact_name":     profile.ContactName,
-		"phone":            profile.Phone,
-		"role_in_company":  profile.RoleInCompany,
-		"gst_number":       profile.GSTNumber,
-		"website":          profile.Website,
-		"logo_url":         profile.LogoURL,
-		"wallet_balance":   profile.WalletBalance,
-		"updated_at":       profile.UpdatedAt,
-		"has_subscription": hasSubscription,
-		"is_subscribed":    isActive,
-		"subscription":     &subscription,
-		"plan":             planDetails,
+		"user_id":            profile.UserID,
+		"company_name":       profile.CompanyName,
+		"contact_name":       profile.ContactName,
+		"phone":              profile.Phone,
+		"role_in_company":    profile.RoleInCompany,
+		"gst_number":         profile.GSTNumber,
+		"website":            profile.Website,
+		"logo_url":           profile.LogoURL,
+		"industry":           profile.Industry,
+		"description":        profile.Description,
+		"founded_year":       profile.FoundedYear,
+		"company_size":       profile.CompanySize,
+		"headquarters":       profile.Headquarters,
+		"instagram_url":      profile.InstagramURL,
+		"twitter_url":        profile.TwitterURL,
+		"linkedin_url":       profile.LinkedinURL,
+		"product_categories": profile.ProductCategories,
+		"target_audience":    profile.TargetAudience,
+		"campaign_types":     profile.CampaignTypes,
+		"wallet_balance":     profile.WalletBalance,
+		"updated_at":         profile.UpdatedAt,
+		"has_subscription":   hasSubscription,
+		"is_subscribed":      isActive,
+		"subscription":       &subscription,
+		"plan":               planDetails,
+	})
+}
+
+// GetPublicProfile returns public brand info accessible to any authenticated user
+func (h *BrandHandler) GetPublicProfile(c *gin.Context) {
+	brandID := c.Param("id")
+	var profile domain.BrandProfile
+	if err := h.db.Where("user_id = ?", brandID).First(&profile).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Brand not found"})
+		return
+	}
+	var user domain.User
+	h.db.Where("id = ?", brandID).First(&user)
+
+	c.JSON(http.StatusOK, gin.H{
+		"user_id":            profile.UserID,
+		"company_name":       profile.CompanyName,
+		"contact_name":       profile.ContactName,
+		"logo_url":           profile.LogoURL,
+		"website":            profile.Website,
+		"industry":           profile.Industry,
+		"description":        profile.Description,
+		"founded_year":       profile.FoundedYear,
+		"company_size":       profile.CompanySize,
+		"headquarters":       profile.Headquarters,
+		"instagram_url":      profile.InstagramURL,
+		"twitter_url":        profile.TwitterURL,
+		"linkedin_url":       profile.LinkedinURL,
+		"product_categories": profile.ProductCategories,
+		"target_audience":    profile.TargetAudience,
+		"campaign_types":     profile.CampaignTypes,
 	})
 }

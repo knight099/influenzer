@@ -57,6 +57,18 @@ type BrandProfile struct {
 	GSTNumber     string    `json:"gst_number"`
 	Website       string    `json:"website"`
 	LogoURL       string    `json:"logo_url"`
+	// Extended profile
+	Industry          string `json:"industry"`
+	Description       string `gorm:"type:text" json:"description"`
+	FoundedYear       int    `json:"founded_year"`
+	CompanySize       string `json:"company_size"`
+	Headquarters      string `json:"headquarters"`
+	InstagramURL      string `json:"instagram_url"`
+	TwitterURL        string `json:"twitter_url"`
+	LinkedinURL       string `json:"linkedin_url"`
+	ProductCategories string `gorm:"type:text" json:"product_categories"`
+	TargetAudience    string `gorm:"type:text" json:"target_audience"`
+	CampaignTypes     string `gorm:"type:text" json:"campaign_types"`
 	WalletBalance float64   `gorm:"default:0" json:"wallet_balance"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

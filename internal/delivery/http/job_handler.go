@@ -93,6 +93,7 @@ func (h *JobHandler) GetFeed(c *gin.Context) {
 			"niche":        camp.Niche,
 			"platform":     camp.Platform,
 			"requirements": camp.Requirements,
+			"brand_id":     camp.BrandID,
 			"brand_name":   brandName,
 			"brand_logo":   bp.LogoURL,
 			"applied":      appliedCampaigns[camp.ID],
