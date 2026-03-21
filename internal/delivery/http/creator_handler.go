@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +28,7 @@ type CreatorMediaItem struct {
 	ViewCount    int64  `json:"view_count"`
 	LikeCount    int64  `json:"like_count"`
 	CommentCount int64  `json:"comment_count"`
+	Duration     int64  `json:"duration"` // seconds (YouTube only)
 	PublishedAt  string `json:"published_at"`
 }
 
@@ -439,20 +442,30 @@ func (h *CreatorHandler) GetAnalytics(c *gin.Context) {
 			"tier":        creatorTier(ytSubs),
 		}
 
+		// Channel metadata from cached stats
+		if country, ok := ytData["country"].(string); ok && country != "" {
+			ytAnalytics["country"] = country
+		}
+		if publishedAt, ok := ytData["published_at"].(string); ok && publishedAt != "" {
+			ytAnalytics["channel_age_years"] = channelAgeYears(publishedAt)
+		}
+
 		if user.YoutubeToken != "" {
+			// Per-video averages from last 20 videos
 			if items, err := h.fetchYouTubeVideos(user.YoutubeToken, 20); err == nil && len(items) > 0 {
-				var totalViews, totalLikes, totalComments int64
+				var totalViews, totalLikes, totalComments, totalDuration int64
 				for _, item := range items {
 					totalViews += item.ViewCount
 					totalLikes += item.LikeCount
 					totalComments += item.CommentCount
+					totalDuration += item.Duration
 				}
 				count := int64(len(items))
 				avgViews := totalViews / count
 				avgLikes := totalLikes / count
 				avgComments := totalComments / count
+				avgDuration := totalDuration / count // seconds
 
-				// Engagement rate = (avg_likes + avg_comments) / subscribers * 100
 				var engRate float64
 				if ytSubs > 0 {
 					engRate = float64(avgLikes+avgComments) / float64(ytSubs) * 100
@@ -461,8 +474,14 @@ func (h *CreatorHandler) GetAnalytics(c *gin.Context) {
 				ytAnalytics["avg_views"]       = avgViews
 				ytAnalytics["avg_likes"]       = avgLikes
 				ytAnalytics["avg_comments"]    = avgComments
+				ytAnalytics["avg_duration"]    = avgDuration
 				ytAnalytics["engagement_rate"] = fmt.Sprintf("%.2f", engRate)
 				ytAnalytics["videos_analyzed"] = count
+			}
+
+			// YouTube Analytics API: 28-day aggregate (requires yt-analytics.readonly scope)
+			if analyticsData, err := h.fetchYouTubeAnalytics(user.YoutubeToken, 28); err == nil {
+				ytAnalytics["analytics_28d"] = analyticsData
 			}
 		}
 		analytics["youtube"] = ytAnalytics
@@ -734,6 +753,8 @@ type YouTubeChannelResponse struct {
 			Title       string `json:"title"`
 			Description string `json:"description"`
 			CustomURL   string `json:"customUrl"`
+			PublishedAt string `json:"publishedAt"`
+			Country     string `json:"country"`
 			Thumbnails  struct {
 				Default struct {
 					URL string `json:"url"`
@@ -788,6 +809,8 @@ func (h *CreatorHandler) fetchYouTubeStats(accessToken string) (map[string]inter
 		"channel_title":    channel.Snippet.Title,
 		"channel_url":      channel.Snippet.CustomURL,
 		"thumbnail":        channel.Snippet.Thumbnails.Default.URL,
+		"published_at":     channel.Snippet.PublishedAt,
+		"country":          channel.Snippet.Country,
 	}, nil
 }
 
@@ -1118,6 +1141,9 @@ type ytVideosResponse struct {
 			LikeCount    string `json:"likeCount"`
 			CommentCount string `json:"commentCount"`
 		} `json:"statistics"`
+		ContentDetails struct {
+			Duration string `json:"duration"` // ISO 8601: PT4M23S
+		} `json:"contentDetails"`
 	} `json:"items"`
 	Error *struct {
 		Message string `json:"message"`
@@ -1206,9 +1232,9 @@ func (h *CreatorHandler) fetchYouTubeVideos(accessToken string, limit int) ([]Cr
 		}
 	}
 
-	// Step 3: fetch statistics for all videos in one request
+	// Step 3: fetch statistics + content details for all videos in one request
 	vidStatsURL := fmt.Sprintf(
-		"https://www.googleapis.com/youtube/v3/videos?part=statistics&id=%s",
+		"https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=%s",
 		strings.Join(videoIDs, ","),
 	)
 	body, err = doGet(vidStatsURL)
@@ -1228,6 +1254,7 @@ func (h *CreatorHandler) fetchYouTubeVideos(accessToken string, limit int) ([]Cr
 		viewCount    string
 		likeCount    string
 		commentCount string
+		duration     string // ISO 8601
 	}
 	statsByID := make(map[string]videoStats, len(vidResp.Items))
 	for _, v := range vidResp.Items {
@@ -1235,6 +1262,7 @@ func (h *CreatorHandler) fetchYouTubeVideos(accessToken string, limit int) ([]Cr
 			viewCount:    v.Statistics.ViewCount,
 			likeCount:    v.Statistics.LikeCount,
 			commentCount: v.Statistics.CommentCount,
+			duration:     v.ContentDetails.Duration,
 		}
 	}
 
@@ -1255,6 +1283,7 @@ func (h *CreatorHandler) fetchYouTubeVideos(accessToken string, limit int) ([]Cr
 			ViewCount:    parseCount(st.viewCount),
 			LikeCount:    parseCount(st.likeCount),
 			CommentCount: parseCount(st.commentCount),
+			Duration:     parseDuration(st.duration),
 			PublishedAt:  sn.publishedAt,
 		})
 	}
@@ -1266,4 +1295,112 @@ func parseCount(s string) int64 {
 	var n int64
 	fmt.Sscanf(s, "%d", &n)
 	return n
+}
+
+// parseDuration converts an ISO 8601 duration string to seconds. e.g. "PT4M23S" → 263
+func parseDuration(iso string) int64 {
+	iso = strings.TrimPrefix(iso, "PT")
+	var total int64
+	if i := strings.Index(iso, "H"); i != -1 {
+		h, _ := strconv.ParseInt(iso[:i], 10, 64)
+		total += h * 3600
+		iso = iso[i+1:]
+	}
+	if i := strings.Index(iso, "M"); i != -1 {
+		m, _ := strconv.ParseInt(iso[:i], 10, 64)
+		total += m * 60
+		iso = iso[i+1:]
+	}
+	if i := strings.Index(iso, "S"); i != -1 {
+		s, _ := strconv.ParseInt(iso[:i], 10, 64)
+		total += s
+	}
+	return total
+}
+
+// channelAgeYears returns the channel age in years (1 decimal) from an RFC3339 publishedAt string.
+func channelAgeYears(publishedAt string) float64 {
+	t, err := time.Parse(time.RFC3339, publishedAt)
+	if err != nil {
+		return 0
+	}
+	years := time.Since(t).Hours() / 8760
+	return math.Round(years*10) / 10
+}
+
+// ── YouTube Analytics API ─────────────────────────────────────────────────────
+
+type ytAnalyticsResponse struct {
+	ColumnHeaders []struct {
+		Name string `json:"name"`
+	} `json:"columnHeaders"`
+	Rows  [][]interface{} `json:"rows"`
+	Error *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// fetchYouTubeAnalytics calls the YouTube Analytics API for a rolling window of `days`.
+// Requires the yt-analytics.readonly OAuth scope. Gracefully returns an error if the
+// token lacks that scope so callers can omit the data rather than fail.
+func (h *CreatorHandler) fetchYouTubeAnalytics(accessToken string, days int) (map[string]interface{}, error) {
+	endDate := time.Now().Format("2006-01-02")
+	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+
+	metrics := strings.Join([]string{
+		"views",
+		"estimatedMinutesWatched",
+		"averageViewDuration",
+		"averageViewPercentage",
+		"subscribersGained",
+		"subscribersLost",
+		"likes",
+		"shares",
+		"comments",
+		"impressions",
+		"impressionClickThroughRate",
+	}, ",")
+
+	apiURL := fmt.Sprintf(
+		"https://youtubeanalytics.googleapis.com/v2/reports?ids=channel==MINE&startDate=%s&endDate=%s&metrics=%s",
+		startDate, endDate, metrics,
+	)
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var ytResp ytAnalyticsResponse
+	if err := json.Unmarshal(body, &ytResp); err != nil {
+		return nil, err
+	}
+	if ytResp.Error != nil {
+		return nil, fmt.Errorf("YouTube Analytics API error (%d): %s", ytResp.Error.Code, ytResp.Error.Message)
+	}
+	if len(ytResp.Rows) == 0 || len(ytResp.ColumnHeaders) == 0 {
+		return nil, fmt.Errorf("no analytics data")
+	}
+
+	result := make(map[string]interface{}, len(ytResp.ColumnHeaders))
+	row := ytResp.Rows[0]
+	for i, h := range ytResp.ColumnHeaders {
+		if i < len(row) {
+			result[h.Name] = row[i]
+		}
+	}
+	return result, nil
 }
