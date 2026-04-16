@@ -74,28 +74,100 @@ type BrandProfile struct {
 }
 
 type CreatorProfile struct {
-	UserID             uuid.UUID `gorm:"type:uuid;primaryKey" json:"user_id"`
-	Niche              string    `gorm:"type:text" json:"niche"` // Comma separated tags
-	MinBudget          float64   `json:"min_budget"`
-	City               string    `json:"city"`
-	Phone              string    `json:"phone"`
-	Platform           string    `json:"platform"` // e.g. "instagram", "youtube"
-	RazorpayAccountID  string    `json:"razorpay_account_id"`
-	// Extended profile fields
+	UserID            uuid.UUID `gorm:"type:uuid;primaryKey" json:"user_id"`
+	Niche             string    `gorm:"type:text" json:"niche"` // Comma separated tags
+	MinBudget         float64   `json:"min_budget"`
+	City              string    `json:"city"`
+	Phone             string    `json:"phone"`
+	Platform          string    `json:"platform"` // e.g. "instagram", "youtube"
+	RazorpayAccountID string    `json:"razorpay_account_id"`
+
+	// ── Professional identity ────────────────────────────────────────────────
+	Headline        string     `gorm:"type:text" json:"headline"`                                    // "Tech & Lifestyle Creator | 500K+ reach"
+	Gender          string     `gorm:"type:varchar(20)" json:"gender"`                               // male, female, non_binary, prefer_not_to_say
+	DateOfBirth     *time.Time `json:"date_of_birth"`                                                // For age calculation
+	ProfileComplete int        `gorm:"default:0" json:"profile_complete"`                            // 0-100 percentage
+
+	// ── Extended profile fields ──────────────────────────────────────────────
 	Bio               string                 `gorm:"type:text" json:"bio"`
-	Languages         string                 `json:"languages"`         // Comma separated e.g. "Hindi,English"
+	Languages         string                 `json:"languages"`                            // Comma separated e.g. "Hindi,English"
 	YearsExperience   int                    `json:"years_experience"`
-	ContentCategories string                 `gorm:"type:text" json:"content_categories"` // Comma separated
-	PastBrands        string                 `gorm:"type:text" json:"past_brands"`        // Comma separated brand names
-	RateCard          map[string]interface{} `gorm:"serializer:json" json:"rate_card"`    // per_post, per_reel, per_video
-	SocialLinks       map[string]interface{} `gorm:"serializer:json" json:"social_links"` // twitter, linkedin, website
-	// JSONB for stats
-	CachedStats map[string]interface{} `gorm:"serializer:json" json:"cached_stats"`
-	Portfolio   map[string]interface{} `gorm:"serializer:json" json:"portfolio"` // Store video links
-	UpdatedAt   time.Time              `json:"updated_at"`
+	ContentCategories string                 `gorm:"type:text" json:"content_categories"`  // Comma separated
+	PastBrands        string                 `gorm:"type:text" json:"past_brands"`         // Comma separated brand names (legacy)
+	RateCard          map[string]interface{} `gorm:"serializer:json" json:"rate_card"`     // per_post, per_reel, per_video, per_story, per_carousel, per_live, per_youtube_integration, per_youtube_short, per_barter, custom_packages
+	SocialLinks       map[string]interface{} `gorm:"serializer:json" json:"social_links"`  // twitter, linkedin, website
+
+	// ── Availability & logistics ─────────────────────────────────────────────
+	AvailabilityStatus string `gorm:"type:varchar(20);default:'available'" json:"availability_status"` // available, busy, not_accepting
+	TurnaroundDays     int    `json:"turnaround_days"`                                                 // avg content delivery days
+	Location           string `json:"location"`                                                        // full address/region
+	PinCode            string `gorm:"type:varchar(10)" json:"pin_code"`
+	WillingToTravel    bool   `gorm:"default:false" json:"willing_to_travel"`
+
+	// ── Audience demographics (JSONB) ────────────────────────────────────────
+	// { age_split: {18-24: 35, ...}, gender_split: {male: 45, ...}, top_cities: ["Mumbai", ...], top_countries: ["India", ...] }
+	AudienceDemographics map[string]interface{} `gorm:"serializer:json" json:"audience_demographics"`
+
+	// ── Collaboration preferences (JSONB) ────────────────────────────────────
+	// { preferred_categories: ["tech","lifestyle"], brand_size: ["startup","enterprise"], content_types: ["reel","long_form"], exclusivity_open: true, barter_open: true }
+	CollaborationPrefs map[string]interface{} `gorm:"serializer:json" json:"collaboration_prefs"`
+
+	// ── Structured past work (JSONB array) ───────────────────────────────────
+	// [{ brand_name, deliverable_type, platform, date, url, description }]
+	PastWork []map[string]interface{} `gorm:"serializer:json" json:"past_work"`
+
+	// ── Performance metrics (computed, cached) ───────────────────────────────
+	TotalCampaigns     int     `json:"total_campaigns"`
+	CompletedCampaigns int     `json:"completed_campaigns"`
+	AvgRating          float64 `json:"avg_rating"`
+	ResponseTime       string  `gorm:"type:varchar(20)" json:"response_time"` // "< 1 hour", "< 6 hours", "< 24 hours"
+
+	// ── JSONB for stats & portfolio ──────────────────────────────────────────
+	CachedStats map[string]interface{}   `gorm:"serializer:json" json:"cached_stats"`
+	Portfolio   []map[string]interface{} `gorm:"serializer:json" json:"portfolio"` // [{ title, url, platform, thumbnail_url, description, category }]
+	UpdatedAt   time.Time                `json:"updated_at"`
 
 	// Relationship
 	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+}
+
+// CalculateCompletion returns a 0-100 percentage based on how many profile sections are filled.
+func (cp *CreatorProfile) CalculateCompletion() int {
+	score := 0
+	total := 10
+
+	if cp.Headline != "" {
+		score++
+	}
+	if cp.Bio != "" {
+		score++
+	}
+	if cp.City != "" || cp.Location != "" {
+		score++
+	}
+	if cp.Gender != "" || cp.DateOfBirth != nil {
+		score++
+	}
+	if cp.Languages != "" {
+		score++
+	}
+	if cp.ContentCategories != "" {
+		score++
+	}
+	if len(cp.RateCard) >= 3 {
+		score++
+	}
+	if len(cp.PastWork) > 0 || cp.PastBrands != "" {
+		score++
+	}
+	if len(cp.SocialLinks) > 0 {
+		score++
+	}
+	if len(cp.AudienceDemographics) > 0 {
+		score++
+	}
+
+	return (score * 100) / total
 }
 
 type Campaign struct {

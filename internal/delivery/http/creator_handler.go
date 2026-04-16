@@ -55,6 +55,7 @@ func NewCreatorHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFun
 		apiGroup.GET("/profile", handler.GetMyProfile)
 		apiGroup.POST("/refresh-stats", handler.RefreshStats)
 		apiGroup.PUT("/profile", handler.UpdateProfile)
+		apiGroup.GET("/profile/completion", handler.GetProfileCompletion)
 	}
 
 	// Add analytics endpoint
@@ -65,6 +66,12 @@ func (h *CreatorHandler) Search(c *gin.Context) {
 	queryStr := c.Query("query")
 	niche := c.Query("niche")
 	platform := c.Query("platform")
+	availability := c.Query("availability")
+	gender := c.Query("gender")
+	city := c.Query("city")
+	minRate := c.Query("min_rate")
+	maxRate := c.Query("max_rate")
+	willingToTravel := c.Query("willing_to_travel")
 
 	var creators []domain.CreatorProfile
 
@@ -73,7 +80,8 @@ func (h *CreatorHandler) Search(c *gin.Context) {
 	// Search by name in User table if query string provided
 	if queryStr != "" {
 		query = query.Joins("JOIN users ON users.id = creator_profiles.user_id").
-			Where("users.name ILIKE ? OR creator_profiles.niche ILIKE ?", "%"+queryStr+"%", "%"+queryStr+"%")
+			Where("users.name ILIKE ? OR creator_profiles.niche ILIKE ? OR creator_profiles.headline ILIKE ?",
+				"%"+queryStr+"%", "%"+queryStr+"%", "%"+queryStr+"%")
 	}
 
 	if niche != "" {
@@ -82,6 +90,30 @@ func (h *CreatorHandler) Search(c *gin.Context) {
 
 	if platform != "" {
 		query = query.Where("platform = ?", platform)
+	}
+
+	// New filters
+	if availability != "" {
+		query = query.Where("availability_status = ?", availability)
+	}
+	if gender != "" {
+		query = query.Where("gender = ?", gender)
+	}
+	if city != "" {
+		query = query.Where("city ILIKE ?", "%"+city+"%")
+	}
+	if minRate != "" {
+		if v, err := strconv.ParseFloat(minRate, 64); err == nil {
+			query = query.Where("min_budget >= ?", v)
+		}
+	}
+	if maxRate != "" {
+		if v, err := strconv.ParseFloat(maxRate, 64); err == nil {
+			query = query.Where("min_budget <= ?", v)
+		}
+	}
+	if willingToTravel == "true" {
+		query = query.Where("willing_to_travel = ?", true)
 	}
 
 	if err := query.Find(&creators).Error; err != nil {
@@ -165,6 +197,17 @@ func (h *CreatorHandler) Search(c *gin.Context) {
 			"past_brands":        cp.PastBrands,
 			"rate_card":          cp.RateCard,
 			"social_links":       cp.SocialLinks,
+
+			// New fields
+			"headline":             cp.Headline,
+			"gender":               cp.Gender,
+			"availability_status":  cp.AvailabilityStatus,
+			"turnaround_days":      cp.TurnaroundDays,
+			"willing_to_travel":    cp.WillingToTravel,
+			"profile_complete":     cp.CalculateCompletion(),
+			"collaboration_prefs":  cp.CollaborationPrefs,
+			"past_work":            cp.PastWork,
+			"response_time":        cp.ResponseTime,
 		}
 
 		response = append(response, creatorData)
@@ -256,18 +299,22 @@ func (h *CreatorHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
+	// Compute campaign stats from proposals
+	var totalCampaigns, completedCampaigns int64
+	h.db.Model(&domain.Proposal{}).Where("creator_id = ?", profile.UserID).Count(&totalCampaigns)
+	h.db.Model(&domain.Proposal{}).Where("creator_id = ? AND status IN ?", profile.UserID, []string{"COMPLETED", "PAID"}).Count(&completedCampaigns)
+
 	c.JSON(http.StatusOK, gin.H{
-		"id":                 profile.UserID,
-		"name":               profile.User.Name,
-		"email":              profile.User.Email,
-		"avatar_url":         profile.User.AvatarURL,
+		"id":         profile.UserID,
+		"name":       profile.User.Name,
+		"email":      profile.User.Email,
+		"avatar_url": profile.User.AvatarURL,
+
+		// Basic info
 		"niche":              profile.Niche,
 		"min_budget":         profile.MinBudget,
 		"city":               profile.City,
 		"platform":           profile.Platform,
-		"portfolio":          profile.Portfolio,
-		"cached_stats":       profile.CachedStats,
-		"reviews":            []string{},
 		"bio":                profile.Bio,
 		"languages":          profile.Languages,
 		"years_experience":   profile.YearsExperience,
@@ -275,10 +322,40 @@ func (h *CreatorHandler) GetProfile(c *gin.Context) {
 		"past_brands":        profile.PastBrands,
 		"rate_card":          profile.RateCard,
 		"social_links":       profile.SocialLinks,
+
+		// Professional identity
+		"headline":         profile.Headline,
+		"gender":           profile.Gender,
+		"date_of_birth":    profile.DateOfBirth,
+		"profile_complete": profile.CalculateCompletion(),
+
+		// Availability & logistics
+		"availability_status": profile.AvailabilityStatus,
+		"turnaround_days":     profile.TurnaroundDays,
+		"location":            profile.Location,
+		"pin_code":            profile.PinCode,
+		"willing_to_travel":   profile.WillingToTravel,
+
+		// Rich data
+		"audience_demographics": profile.AudienceDemographics,
+		"collaboration_prefs":   profile.CollaborationPrefs,
+		"past_work":             profile.PastWork,
+		"portfolio":             profile.Portfolio,
+		"response_time":         profile.ResponseTime,
+
+		// Performance metrics (computed)
+		"total_campaigns":     totalCampaigns,
+		"completed_campaigns": completedCampaigns,
+		"avg_rating":          profile.AvgRating,
+
+		// Platform stats
+		"cached_stats": profile.CachedStats,
+		"reviews":      []string{},
 	})
 }
 
 type updateProfileRequest struct {
+	// Basic info
 	Bio               string                 `json:"bio"`
 	Languages         string                 `json:"languages"`
 	YearsExperience   int                    `json:"years_experience"`
@@ -291,6 +368,33 @@ type updateProfileRequest struct {
 	City              string                 `json:"city"`
 	Platform          string                 `json:"platform"`
 	Phone             string                 `json:"phone"`
+
+	// Professional identity
+	Headline    string  `json:"headline"`
+	Gender      string  `json:"gender"`
+	DateOfBirth *string `json:"date_of_birth"` // ISO 8601 string, parsed server-side
+
+	// Availability & logistics
+	AvailabilityStatus string `json:"availability_status"`
+	TurnaroundDays     int    `json:"turnaround_days"`
+	Location           string `json:"location"`
+	PinCode            string `json:"pin_code"`
+	WillingToTravel    *bool  `json:"willing_to_travel"` // pointer to distinguish false from not-provided
+
+	// Audience demographics (JSONB)
+	AudienceDemographics map[string]interface{} `json:"audience_demographics"`
+
+	// Collaboration preferences (JSONB)
+	CollaborationPrefs map[string]interface{} `json:"collaboration_prefs"`
+
+	// Structured past work (JSONB array)
+	PastWork []map[string]interface{} `json:"past_work"`
+
+	// Portfolio items (JSONB array)
+	Portfolio []map[string]interface{} `json:"portfolio"`
+
+	// Performance / self-reported
+	ResponseTime string `json:"response_time"`
 }
 
 func (h *CreatorHandler) UpdateProfile(c *gin.Context) {
@@ -313,7 +417,7 @@ func (h *CreatorHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	// Update only provided fields
+	// Update only provided fields — basic info
 	if req.Bio != "" { profile.Bio = req.Bio }
 	if req.Languages != "" { profile.Languages = req.Languages }
 	if req.YearsExperience > 0 { profile.YearsExperience = req.YearsExperience }
@@ -327,12 +431,91 @@ func (h *CreatorHandler) UpdateProfile(c *gin.Context) {
 	if req.Platform != "" { profile.Platform = req.Platform }
 	if req.Phone != "" { profile.Phone = req.Phone }
 
+	// Professional identity
+	if req.Headline != "" { profile.Headline = req.Headline }
+	if req.Gender != "" { profile.Gender = req.Gender }
+	if req.DateOfBirth != nil {
+		if t, err := time.Parse("2006-01-02", *req.DateOfBirth); err == nil {
+			profile.DateOfBirth = &t
+		}
+	}
+
+	// Availability & logistics
+	if req.AvailabilityStatus != "" { profile.AvailabilityStatus = req.AvailabilityStatus }
+	if req.TurnaroundDays > 0 { profile.TurnaroundDays = req.TurnaroundDays }
+	if req.Location != "" { profile.Location = req.Location }
+	if req.PinCode != "" { profile.PinCode = req.PinCode }
+	if req.WillingToTravel != nil { profile.WillingToTravel = *req.WillingToTravel }
+
+	// JSONB fields — only overwrite if provided (non-nil)
+	if req.AudienceDemographics != nil { profile.AudienceDemographics = req.AudienceDemographics }
+	if req.CollaborationPrefs != nil { profile.CollaborationPrefs = req.CollaborationPrefs }
+	if req.PastWork != nil { profile.PastWork = req.PastWork }
+	if req.Portfolio != nil { profile.Portfolio = req.Portfolio }
+	if req.ResponseTime != "" { profile.ResponseTime = req.ResponseTime }
+
+	// Recalculate profile completion
+	profile.ProfileComplete = profile.CalculateCompletion()
+
 	if err := h.db.Save(&profile).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Profile updated"})
+	c.JSON(http.StatusOK, gin.H{"message": "Profile updated", "profile_complete": profile.ProfileComplete})
+}
+
+// GetProfileCompletion returns the profile completeness percentage and missing sections
+func (h *CreatorHandler) GetProfileCompletion(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var profile domain.CreatorProfile
+	if err := h.db.Where("user_id = ?", userID).First(&profile).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Creator profile not found"})
+		return
+	}
+
+	missing := []map[string]interface{}{}
+
+	if profile.Headline == "" {
+		missing = append(missing, map[string]interface{}{"section": "headline", "label": "Add a professional headline", "action": "edit_about"})
+	}
+	if profile.Bio == "" {
+		missing = append(missing, map[string]interface{}{"section": "bio", "label": "Write your bio", "action": "edit_about"})
+	}
+	if profile.City == "" && profile.Location == "" {
+		missing = append(missing, map[string]interface{}{"section": "location", "label": "Add your location", "action": "edit_about"})
+	}
+	if profile.Gender == "" && profile.DateOfBirth == nil {
+		missing = append(missing, map[string]interface{}{"section": "demographics", "label": "Add gender & date of birth", "action": "edit_about"})
+	}
+	if profile.Languages == "" {
+		missing = append(missing, map[string]interface{}{"section": "languages", "label": "Add languages you speak", "action": "edit_about"})
+	}
+	if profile.ContentCategories == "" {
+		missing = append(missing, map[string]interface{}{"section": "categories", "label": "Add content categories", "action": "edit_about"})
+	}
+	if len(profile.RateCard) < 3 {
+		missing = append(missing, map[string]interface{}{"section": "rate_card", "label": "Complete your rate card", "action": "edit_rate_card"})
+	}
+	if len(profile.PastWork) == 0 && profile.PastBrands == "" {
+		missing = append(missing, map[string]interface{}{"section": "past_work", "label": "Add past work & collaborations", "action": "edit_past_work"})
+	}
+	if len(profile.SocialLinks) == 0 {
+		missing = append(missing, map[string]interface{}{"section": "social_links", "label": "Add social links", "action": "edit_about"})
+	}
+	if len(profile.AudienceDemographics) == 0 {
+		missing = append(missing, map[string]interface{}{"section": "audience", "label": "Add audience demographics", "action": "edit_audience"})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"profile_complete": profile.CalculateCompletion(),
+		"missing_sections": missing,
+	})
 }
 
 // GetAnalytics computes engagement metrics from cached stats and recent media
@@ -586,12 +769,50 @@ func (h *CreatorHandler) GetMyProfile(c *gin.Context) {
 
 	// Add creator profile data if exists
 	if user.CreatorProfile != nil {
-		response["niche"] = user.CreatorProfile.Niche
-		response["min_budget"] = user.CreatorProfile.MinBudget
-		response["city"] = user.CreatorProfile.City
-		response["platform"] = user.CreatorProfile.Platform
-		response["cached_stats"] = user.CreatorProfile.CachedStats
-		response["portfolio"] = user.CreatorProfile.Portfolio
+		cp := user.CreatorProfile
+		response["niche"] = cp.Niche
+		response["min_budget"] = cp.MinBudget
+		response["city"] = cp.City
+		response["platform"] = cp.Platform
+		response["cached_stats"] = cp.CachedStats
+		response["portfolio"] = cp.Portfolio
+
+		// Extended profile as nested object for the mobile app
+		response["creator_profile"] = gin.H{
+			"bio":                  cp.Bio,
+			"languages":            cp.Languages,
+			"years_experience":     cp.YearsExperience,
+			"content_categories":   cp.ContentCategories,
+			"past_brands":          cp.PastBrands,
+			"rate_card":            cp.RateCard,
+			"social_links":        cp.SocialLinks,
+			"city":                 cp.City,
+			"phone":                cp.Phone,
+			"min_budget":           cp.MinBudget,
+			"headline":             cp.Headline,
+			"gender":               cp.Gender,
+			"date_of_birth":        cp.DateOfBirth,
+			"availability_status":  cp.AvailabilityStatus,
+			"turnaround_days":      cp.TurnaroundDays,
+			"location":             cp.Location,
+			"pin_code":             cp.PinCode,
+			"willing_to_travel":    cp.WillingToTravel,
+			"audience_demographics": cp.AudienceDemographics,
+			"collaboration_prefs":  cp.CollaborationPrefs,
+			"past_work":            cp.PastWork,
+			"portfolio":            cp.Portfolio,
+			"response_time":        cp.ResponseTime,
+		}
+		response["profile_complete"] = cp.CalculateCompletion()
+
+		// Compute campaign stats
+		var totalCampaigns, completedCampaigns int64
+		h.db.Model(&domain.Proposal{}).Where("creator_id = ?", user.ID).Count(&totalCampaigns)
+		h.db.Model(&domain.Proposal{}).Where("creator_id = ? AND status IN ?", user.ID, []string{"COMPLETED", "PAID"}).Count(&completedCampaigns)
+		response["total_campaigns"] = totalCampaigns
+		response["completed_campaigns"] = completedCampaigns
+		response["avg_rating"] = cp.AvgRating
+		response["response_time"] = cp.ResponseTime
 	}
 
 	// Check subscription status
