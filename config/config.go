@@ -15,6 +15,8 @@ type Config struct {
 	RazorpayAccountNumber  string `mapstructure:"RAZORPAY_ACCOUNT_NUMBER"` // Razorpay X account for payouts
 	GoogleClientID        string `mapstructure:"GOOGLE_CLIENT_ID"`
 	GoogleClientSecret    string `mapstructure:"GOOGLE_CLIENT_SECRET"`
+	GoogleWebClientID     string `mapstructure:"GOOGLE_WEB_CLIENT_ID"`
+	GoogleWebClientSecret string `mapstructure:"GOOGLE_WEB_CLIENT_SECRET"`
 	InstagramClientID     string `mapstructure:"INSTAGRAM_CLIENT_ID"`
 	InstagramClientSecret string `mapstructure:"INSTAGRAM_CLIENT_SECRET"`
 	InstagramRedirectURI  string `mapstructure:"INSTAGRAM_REDIRECT_URI"`
@@ -35,6 +37,8 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("RAZORPAY_ACCOUNT_NUMBER")
 	viper.BindEnv("GOOGLE_CLIENT_ID")
 	viper.BindEnv("GOOGLE_CLIENT_SECRET")
+	viper.BindEnv("GOOGLE_WEB_CLIENT_ID")
+	viper.BindEnv("GOOGLE_WEB_CLIENT_SECRET")
 	viper.BindEnv("INSTAGRAM_CLIENT_ID")
 	viper.BindEnv("INSTAGRAM_CLIENT_SECRET")
 	viper.BindEnv("INSTAGRAM_REDIRECT_URI")

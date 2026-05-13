@@ -19,7 +19,7 @@ type AuthService interface {
 	LoginWithGoogle(ctx context.Context, code, name, avatarURL string) (string, *User, error)
 	LoginWithEmail(ctx context.Context, email, password string) (string, *User, error)
 	Register(ctx context.Context, email, password string, role Role) (string, *User, error)
-	ConnectSocial(ctx context.Context, userID, platform, authCode string) error
+	ConnectSocial(ctx context.Context, userID, platform, authCode, redirectURI string) error
 	SetRole(ctx context.Context, userID string, role Role) error
 }
 

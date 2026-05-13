@@ -202,18 +202,15 @@ func (s *authService) LoginWithEmail(ctx context.Context, email, password string
 	return token, user, nil
 }
 
-func (s *authService) ConnectSocial(ctx context.Context, userID, platform, authCode string) error {
+func (s *authService) ConnectSocial(ctx context.Context, userID, platform, authCode, redirectURI string) error {
 	user, err := s.authRepo.GetBaseUserByID(ctx, userID)
 	if err != nil {
 		return err
 	}
 
-	// This Redirect URI must match what the Frontend used!
-	redirectURI := "http://localhost:8081/callback" // Default fallback
-
 	if platform == "instagram" {
-		// Use configured redirect URI for Instagram
-		if s.cfg.InstagramRedirectURI != "" {
+		// Use client-provided redirect URI, fall back to configured one
+		if redirectURI == "" {
 			redirectURI = s.cfg.InstagramRedirectURI
 		}
 
@@ -227,6 +224,12 @@ func (s *authService) ConnectSocial(ctx context.Context, userID, platform, authC
 			// In real flow, we might fetch follower count here too using the token
 		}
 	} else if platform == "youtube" {
+		// For native Google Sign-In, the correct redirect_uri is "postmessage"
+		// (server auth code flow with no browser redirect).
+		// For web OAuth code flow, the client sends the actual redirect_uri.
+		if redirectURI == "" {
+			redirectURI = "postmessage"
+		}
 		accessToken, refreshToken, err := s.exchangeGoogleToken(authCode, redirectURI)
 		if err != nil {
 			return err
@@ -293,9 +296,21 @@ func (s *authService) exchangeInstagramToken(code, redirectURI string) (string, 
 }
 
 func (s *authService) exchangeGoogleToken(code, redirectURI string) (accessToken, refreshToken string, err error) {
+	// For YouTube server auth code exchange, we must use the Web client credentials
+	// (the same Web Client ID used as serverClientId on the mobile side).
+	// The Android client ID has no secret and cannot be used for server-side exchange.
+	clientID := s.cfg.GoogleWebClientID
+	if clientID == "" {
+		clientID = s.cfg.GoogleClientID // fallback
+	}
+	clientSecret := s.cfg.GoogleWebClientSecret
+	if clientSecret == "" {
+		clientSecret = s.cfg.GoogleClientSecret // fallback
+	}
+
 	values := url.Values{}
-	values.Set("client_id", s.cfg.GoogleClientID)
-	values.Set("client_secret", s.cfg.GoogleClientSecret)
+	values.Set("client_id", clientID)
+	values.Set("client_secret", clientSecret)
 	values.Set("grant_type", "authorization_code")
 	values.Set("redirect_uri", redirectURI)
 	values.Set("code", code)

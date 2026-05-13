@@ -163,8 +163,9 @@ func (h *AuthHandler) Register(c *gin.Context) {
 }
 
 type connectSocialRequest struct {
-	Platform string `json:"platform" binding:"required"`
-	AuthCode string `json:"auth_code" binding:"required"`
+	Platform    string `json:"platform" binding:"required"`
+	AuthCode    string `json:"auth_code" binding:"required"`
+	RedirectURI string `json:"redirect_uri"`
 }
 
 // ConnectSocial godoc
@@ -193,7 +194,7 @@ func (h *AuthHandler) ConnectSocial(c *gin.Context) {
 		return
 	}
 
-	err := h.authService.ConnectSocial(c.Request.Context(), userID.(string), req.Platform, req.AuthCode)
+	err := h.authService.ConnectSocial(c.Request.Context(), userID.(string), req.Platform, req.AuthCode, req.RedirectURI)
 	if err != nil {
 		utils.Logger.Error("ConnectSocial Service Error: " + err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -251,13 +252,12 @@ func (h *AuthHandler) SetRole(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "role": req.Role})
 }
 
-// ServeSocialCallback serves an HTML page for OAuth redirects that deep links back to the mobile app
+// ServeSocialCallback serves an HTML page for OAuth redirects
 func (h *AuthHandler) ServeSocialCallback(c *gin.Context) {
-	// Serve HTML that will redirect to the mobile app with query parameters
 	htmlContent := `<!DOCTYPE html>
 <html>
 <head>
-    <title>Redirecting...</title>
+    <title>Authorization Complete</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body {
@@ -279,21 +279,13 @@ func (h *AuthHandler) ServeSocialCallback(c *gin.Context) {
             max-width: 90%;
             width: 320px;
         }
-        .btn {
-            background-color: #0095f6;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            margin-top: 16px;
-        }
         .success-icon {
             color: #4caf50;
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        .error-icon {
+            color: #f44336;
             font-size: 48px;
             margin-bottom: 16px;
         }
@@ -301,30 +293,21 @@ func (h *AuthHandler) ServeSocialCallback(c *gin.Context) {
 </head>
 <body>
     <div class="card">
-        <div class="success-icon">&#10003;</div>
-        <h2>Connected!</h2>
-        <p>Authorization successful.</p>
-        <p>Tap below to return to the app.</p>
-        
-        <a id="deepLinkBtn" href="#" class="btn">Open App</a>
+        <div id="icon" class="success-icon">&#10003;</div>
+        <h2 id="title">Connected!</h2>
+        <p id="message">Authorization successful. You can now return to the app.</p>
     </div>
 
     <script>
         const params = new URLSearchParams(window.location.search);
         const code = params.get('code');
+        const error = params.get('error');
         
-        if (code) {
-            // Construct Deep Link with /callback path for GoRouter
-            const deepLink = ` + "`influenzer://callback/callback${window.location.search}`" + `;
-            
-            document.getElementById('deepLinkBtn').href = deepLink;
-            
-            // Auto-redirect (optional)
-            // window.location.href = deepLink;
-        } else {
-            document.querySelector('h2').innerText = 'Error';
-            document.querySelector('p').innerText = 'No authorization code received.';
-            document.getElementById('deepLinkBtn').style.display = 'none';
+        if (error || !code) {
+            document.getElementById('icon').className = 'error-icon';
+            document.getElementById('icon').innerHTML = '&#10007;';
+            document.getElementById('title').innerText = 'Authorization Failed';
+            document.getElementById('message').innerText = error || 'No authorization code received.';
         }
     </script>
 </body>
