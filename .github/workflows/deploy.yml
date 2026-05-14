@@ -63,7 +63,6 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
           RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
-          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
@@ -72,23 +71,33 @@ jobs:
           INSTAGRAM_CLIENT_SECRET: ${{ secrets.INSTAGRAM_CLIENT_SECRET }}
           INSTAGRAM_REDIRECT_URI: ${{ secrets.INSTAGRAM_REDIRECT_URI }}
         run: |
-          # Default empty secrets to a placeholder (App Runner rejects empty env var values)
-          RZP_HOOK="${RAZORPAY_WEBHOOK_SECRET:-not_configured}"
+          # Strip trailing newlines/carriage returns from all secrets
+          # (GitHub secrets sometimes have trailing whitespace that breaks AWS API regex)
+          DB_URL_CLEAN=$(printf '%s' "$DATABASE_URL" | tr -d '\n\r')
+          JWT_CLEAN=$(printf '%s' "$JWT_SECRET" | tr -d '\n\r')
+          RZP_ID_CLEAN=$(printf '%s' "$RAZORPAY_KEY_ID" | tr -d '\n\r')
+          RZP_SEC_CLEAN=$(printf '%s' "$RAZORPAY_KEY_SECRET" | tr -d '\n\r')
+          G_ID_CLEAN=$(printf '%s' "$GOOGLE_CLIENT_ID" | tr -d '\n\r')
+          G_SEC_CLEAN=$(printf '%s' "$GOOGLE_CLIENT_SECRET" | tr -d '\n\r')
+          GW_ID_CLEAN=$(printf '%s' "$GOOGLE_WEB_CLIENT_ID" | tr -d '\n\r')
+          GW_SEC_CLEAN=$(printf '%s' "$GOOGLE_WEB_CLIENT_SECRET" | tr -d '\n\r')
+          IG_ID_CLEAN=$(printf '%s' "$INSTAGRAM_CLIENT_ID" | tr -d '\n\r')
+          IG_SEC_CLEAN=$(printf '%s' "$INSTAGRAM_CLIENT_SECRET" | tr -d '\n\r')
+          IG_URI_CLEAN=$(printf '%s' "$INSTAGRAM_REDIRECT_URI" | tr -d '\n\r')
 
-          # Build env vars JSON object, then build the full source config
-          ENV_VARS=$(jq -n \
-            --arg db       "$DATABASE_URL" \
-            --arg jwt      "$JWT_SECRET" \
-            --arg rzp_id   "$RAZORPAY_KEY_ID" \
-            --arg rzp_sec  "$RAZORPAY_KEY_SECRET" \
-            --arg rzp_hook "$RZP_HOOK" \
-            --arg g_id     "$GOOGLE_CLIENT_ID" \
-            --arg g_sec    "$GOOGLE_CLIENT_SECRET" \
-            --arg gw_id    "$GOOGLE_WEB_CLIENT_ID" \
-            --arg gw_sec   "$GOOGLE_WEB_CLIENT_SECRET" \
-            --arg ig_id    "$INSTAGRAM_CLIENT_ID" \
-            --arg ig_sec   "$INSTAGRAM_CLIENT_SECRET" \
-            --arg ig_uri   "$INSTAGRAM_REDIRECT_URI" \
+          # Write env vars JSON to file
+          jq -n \
+            --arg db       "$DB_URL_CLEAN" \
+            --arg jwt      "$JWT_CLEAN" \
+            --arg rzp_id   "$RZP_ID_CLEAN" \
+            --arg rzp_sec  "$RZP_SEC_CLEAN" \
+            --arg g_id     "$G_ID_CLEAN" \
+            --arg g_sec    "$G_SEC_CLEAN" \
+            --arg gw_id    "$GW_ID_CLEAN" \
+            --arg gw_sec   "$GW_SEC_CLEAN" \
+            --arg ig_id    "$IG_ID_CLEAN" \
+            --arg ig_sec   "$IG_SEC_CLEAN" \
+            --arg ig_uri   "$IG_URI_CLEAN" \
             '{
               "ENVIRONMENT":              "production",
               "PORT":                     "8080",
@@ -96,7 +105,6 @@ jobs:
               "JWT_SECRET":               $jwt,
               "RAZORPAY_KEY_ID":          $rzp_id,
               "RAZORPAY_KEY_SECRET":      $rzp_sec,
-              "RAZORPAY_WEBHOOK_SECRET":  $rzp_hook,
               "GOOGLE_CLIENT_ID":         $g_id,
               "GOOGLE_CLIENT_SECRET":     $g_sec,
               "GOOGLE_WEB_CLIENT_ID":     $gw_id,
@@ -104,21 +112,25 @@ jobs:
               "INSTAGRAM_CLIENT_ID":      $ig_id,
               "INSTAGRAM_CLIENT_SECRET":  $ig_sec,
               "INSTAGRAM_REDIRECT_URI":   $ig_uri
-            }')
+            }' > /tmp/env-vars.json
+
+          # Debug: show keys and value lengths (never show actual values)
+          echo "=== Env var debug ==="
+          jq -r 'to_entries[] | "\(.key): len=\(.value | length)"' /tmp/env-vars.json
+          echo "====================="
 
           SERVICE_ARN=$(aws apprunner list-services \
-            --region $AWS_REGION \
+            --region "$AWS_REGION" \
             --query "ServiceSummaryList[?ServiceName=='$APP_RUNNER_SERVICE'].ServiceArn" \
             --output text)
 
           if [ -z "$SERVICE_ARN" ]; then
             echo "Creating new App Runner service..."
-            # Build full CLI input JSON for create-service
             jq -n \
-              --arg name   "$APP_RUNNER_SERVICE" \
-              --arg image  "$IMAGE_URI" \
-              --arg role   "$ACCESS_ROLE_ARN" \
-              --argjson envVars "$ENV_VARS" \
+              --arg name  "$APP_RUNNER_SERVICE" \
+              --arg image "$IMAGE_URI" \
+              --arg role  "$ACCESS_ROLE_ARN" \
+              --slurpfile envVars /tmp/env-vars.json \
               '{
                 "ServiceName": $name,
                 "SourceConfiguration": {
@@ -126,26 +138,18 @@ jobs:
                     "ImageIdentifier": $image,
                     "ImageConfiguration": {
                       "Port": "8080",
-                      "RuntimeEnvironmentVariables": $envVars
+                      "RuntimeEnvironmentVariables": $envVars[0]
                     },
                     "ImageRepositoryType": "ECR"
                   },
-                  "AuthenticationConfiguration": {
-                    "AccessRoleArn": $role
-                  },
+                  "AuthenticationConfiguration": { "AccessRoleArn": $role },
                   "AutoDeploymentsEnabled": true
                 },
-                "InstanceConfiguration": {
-                  "Cpu": "0.25 vCPU",
-                  "Memory": "0.5 GB"
-                },
+                "InstanceConfiguration": { "Cpu": "0.25 vCPU", "Memory": "0.5 GB" },
                 "HealthCheckConfiguration": {
-                  "Protocol": "HTTP",
-                  "Path": "/health",
-                  "Interval": 10,
-                  "Timeout": 5,
-                  "HealthyThreshold": 1,
-                  "UnhealthyThreshold": 5
+                  "Protocol": "HTTP", "Path": "/health",
+                  "Interval": 10, "Timeout": 5,
+                  "HealthyThreshold": 1, "UnhealthyThreshold": 5
                 }
               }' > /tmp/apprunner-input.json
 
@@ -154,12 +158,11 @@ jobs:
               --cli-input-json file:///tmp/apprunner-input.json
           else
             echo "Updating existing App Runner service ($SERVICE_ARN)..."
-            # Build full CLI input JSON for update-service
             jq -n \
-              --arg arn    "$SERVICE_ARN" \
-              --arg image  "$IMAGE_URI" \
-              --arg role   "$ACCESS_ROLE_ARN" \
-              --argjson envVars "$ENV_VARS" \
+              --arg arn   "$SERVICE_ARN" \
+              --arg image "$IMAGE_URI" \
+              --arg role  "$ACCESS_ROLE_ARN" \
+              --slurpfile envVars /tmp/env-vars.json \
               '{
                 "ServiceArn": $arn,
                 "SourceConfiguration": {
@@ -167,13 +170,11 @@ jobs:
                     "ImageIdentifier": $image,
                     "ImageConfiguration": {
                       "Port": "8080",
-                      "RuntimeEnvironmentVariables": $envVars
+                      "RuntimeEnvironmentVariables": $envVars[0]
                     },
                     "ImageRepositoryType": "ECR"
                   },
-                  "AuthenticationConfiguration": {
-                    "AccessRoleArn": $role
-                  },
+                  "AuthenticationConfiguration": { "AccessRoleArn": $role },
                   "AutoDeploymentsEnabled": true
                 }
               }' > /tmp/apprunner-input.json
