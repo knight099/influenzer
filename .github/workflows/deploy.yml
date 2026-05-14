@@ -66,6 +66,8 @@ jobs:
           RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.GOOGLE_WEB_CLIENT_SECRET }}
           INSTAGRAM_CLIENT_ID: ${{ secrets.INSTAGRAM_CLIENT_ID }}
           INSTAGRAM_CLIENT_SECRET: ${{ secrets.INSTAGRAM_CLIENT_SECRET }}
           INSTAGRAM_REDIRECT_URI: ${{ secrets.INSTAGRAM_REDIRECT_URI }}
@@ -81,6 +83,8 @@ jobs:
             --arg rzp_hook "$RAZORPAY_WEBHOOK_SECRET" \
             --arg g_id     "$GOOGLE_CLIENT_ID" \
             --arg g_sec    "$GOOGLE_CLIENT_SECRET" \
+            --arg gw_id    "$GOOGLE_WEB_CLIENT_ID" \
+            --arg gw_sec   "$GOOGLE_WEB_CLIENT_SECRET" \
             --arg ig_id    "$INSTAGRAM_CLIENT_ID" \
             --arg ig_sec   "$INSTAGRAM_CLIENT_SECRET" \
             --arg ig_uri   "$INSTAGRAM_REDIRECT_URI" \
@@ -90,18 +94,20 @@ jobs:
                 ImageConfiguration: {
                   Port: "8080",
                   RuntimeEnvironmentVariables: {
-                    ENVIRONMENT:             "production",
-                    PORT:                    "8080",
-                    DATABASE_URL:            $db,
-                    JWT_SECRET:              $jwt,
-                    RAZORPAY_KEY_ID:         $rzp_id,
-                    RAZORPAY_KEY_SECRET:     $rzp_sec,
-                    RAZORPAY_WEBHOOK_SECRET: $rzp_hook,
-                    GOOGLE_CLIENT_ID:        $g_id,
-                    GOOGLE_CLIENT_SECRET:    $g_sec,
-                    INSTAGRAM_CLIENT_ID:     $ig_id,
-                    INSTAGRAM_CLIENT_SECRET: $ig_sec,
-                    INSTAGRAM_REDIRECT_URI:  $ig_uri
+                    ENVIRONMENT:              "production",
+                    PORT:                     "8080",
+                    DATABASE_URL:             $db,
+                    JWT_SECRET:               $jwt,
+                    RAZORPAY_KEY_ID:          $rzp_id,
+                    RAZORPAY_KEY_SECRET:      $rzp_sec,
+                    RAZORPAY_WEBHOOK_SECRET:  $rzp_hook,
+                    GOOGLE_CLIENT_ID:         $g_id,
+                    GOOGLE_CLIENT_SECRET:     $g_sec,
+                    GOOGLE_WEB_CLIENT_ID:     $gw_id,
+                    GOOGLE_WEB_CLIENT_SECRET: $gw_sec,
+                    INSTAGRAM_CLIENT_ID:      $ig_id,
+                    INSTAGRAM_CLIENT_SECRET:  $ig_sec,
+                    INSTAGRAM_REDIRECT_URI:   $ig_uri
                   }
                 },
                 ImageRepositoryType: "ECR"
@@ -111,6 +117,9 @@ jobs:
               },
               AutoDeploymentsEnabled: true
             }')
+
+          # Write to a temp file to avoid shell escaping issues with AWS CLI
+          echo "$SOURCE_CONFIG" > /tmp/source-config.json
 
           SERVICE_ARN=$(aws apprunner list-services \
             --region $AWS_REGION \
@@ -122,7 +131,7 @@ jobs:
             aws apprunner create-service \
               --service-name "$APP_RUNNER_SERVICE" \
               --region "$AWS_REGION" \
-              --source-configuration "$SOURCE_CONFIG" \
+              --source-configuration file:///tmp/source-config.json \
               --instance-configuration '{"Cpu":"0.25 vCPU","Memory":"0.5 GB"}' \
               --health-check-configuration '{"Protocol":"HTTP","Path":"/health","Interval":10,"Timeout":5,"HealthyThreshold":1,"UnhealthyThreshold":5}'
           else
@@ -130,7 +139,7 @@ jobs:
             aws apprunner update-service \
               --service-arn "$SERVICE_ARN" \
               --region "$AWS_REGION" \
-              --source-configuration "$SOURCE_CONFIG"
+              --source-configuration file:///tmp/source-config.json
           fi
 
       - name: Print App Runner URL
