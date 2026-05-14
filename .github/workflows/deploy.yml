@@ -72,15 +72,16 @@ jobs:
           INSTAGRAM_CLIENT_SECRET: ${{ secrets.INSTAGRAM_CLIENT_SECRET }}
           INSTAGRAM_REDIRECT_URI: ${{ secrets.INSTAGRAM_REDIRECT_URI }}
         run: |
-          # Build source config JSON safely using jq (handles special chars in secrets)
-          SOURCE_CONFIG=$(jq -n \
-            --arg image    "$IMAGE_URI" \
-            --arg role     "$ACCESS_ROLE_ARN" \
+          # Default empty secrets to a placeholder (App Runner rejects empty env var values)
+          RZP_HOOK="${RAZORPAY_WEBHOOK_SECRET:-not_configured}"
+
+          # Build env vars JSON object, then build the full source config
+          ENV_VARS=$(jq -n \
             --arg db       "$DATABASE_URL" \
             --arg jwt      "$JWT_SECRET" \
             --arg rzp_id   "$RAZORPAY_KEY_ID" \
             --arg rzp_sec  "$RAZORPAY_KEY_SECRET" \
-            --arg rzp_hook "$RAZORPAY_WEBHOOK_SECRET" \
+            --arg rzp_hook "$RZP_HOOK" \
             --arg g_id     "$GOOGLE_CLIENT_ID" \
             --arg g_sec    "$GOOGLE_CLIENT_SECRET" \
             --arg gw_id    "$GOOGLE_WEB_CLIENT_ID" \
@@ -89,37 +90,21 @@ jobs:
             --arg ig_sec   "$INSTAGRAM_CLIENT_SECRET" \
             --arg ig_uri   "$INSTAGRAM_REDIRECT_URI" \
             '{
-              ImageRepository: {
-                ImageIdentifier: $image,
-                ImageConfiguration: {
-                  Port: "8080",
-                  RuntimeEnvironmentVariables: {
-                    ENVIRONMENT:              "production",
-                    PORT:                     "8080",
-                    DATABASE_URL:             $db,
-                    JWT_SECRET:               $jwt,
-                    RAZORPAY_KEY_ID:          $rzp_id,
-                    RAZORPAY_KEY_SECRET:      $rzp_sec,
-                    RAZORPAY_WEBHOOK_SECRET:  $rzp_hook,
-                    GOOGLE_CLIENT_ID:         $g_id,
-                    GOOGLE_CLIENT_SECRET:     $g_sec,
-                    GOOGLE_WEB_CLIENT_ID:     $gw_id,
-                    GOOGLE_WEB_CLIENT_SECRET: $gw_sec,
-                    INSTAGRAM_CLIENT_ID:      $ig_id,
-                    INSTAGRAM_CLIENT_SECRET:  $ig_sec,
-                    INSTAGRAM_REDIRECT_URI:   $ig_uri
-                  }
-                },
-                ImageRepositoryType: "ECR"
-              },
-              AuthenticationConfiguration: {
-                AccessRoleArn: $role
-              },
-              AutoDeploymentsEnabled: true
+              "ENVIRONMENT":              "production",
+              "PORT":                     "8080",
+              "DATABASE_URL":             $db,
+              "JWT_SECRET":               $jwt,
+              "RAZORPAY_KEY_ID":          $rzp_id,
+              "RAZORPAY_KEY_SECRET":      $rzp_sec,
+              "RAZORPAY_WEBHOOK_SECRET":  $rzp_hook,
+              "GOOGLE_CLIENT_ID":         $g_id,
+              "GOOGLE_CLIENT_SECRET":     $g_sec,
+              "GOOGLE_WEB_CLIENT_ID":     $gw_id,
+              "GOOGLE_WEB_CLIENT_SECRET": $gw_sec,
+              "INSTAGRAM_CLIENT_ID":      $ig_id,
+              "INSTAGRAM_CLIENT_SECRET":  $ig_sec,
+              "INSTAGRAM_REDIRECT_URI":   $ig_uri
             }')
-
-          # Write to a temp file to avoid shell escaping issues with AWS CLI
-          echo "$SOURCE_CONFIG" > /tmp/source-config.json
 
           SERVICE_ARN=$(aws apprunner list-services \
             --region $AWS_REGION \
@@ -128,18 +113,74 @@ jobs:
 
           if [ -z "$SERVICE_ARN" ]; then
             echo "Creating new App Runner service..."
+            # Build full CLI input JSON for create-service
+            jq -n \
+              --arg name   "$APP_RUNNER_SERVICE" \
+              --arg image  "$IMAGE_URI" \
+              --arg role   "$ACCESS_ROLE_ARN" \
+              --argjson envVars "$ENV_VARS" \
+              '{
+                "ServiceName": $name,
+                "SourceConfiguration": {
+                  "ImageRepository": {
+                    "ImageIdentifier": $image,
+                    "ImageConfiguration": {
+                      "Port": "8080",
+                      "RuntimeEnvironmentVariables": $envVars
+                    },
+                    "ImageRepositoryType": "ECR"
+                  },
+                  "AuthenticationConfiguration": {
+                    "AccessRoleArn": $role
+                  },
+                  "AutoDeploymentsEnabled": true
+                },
+                "InstanceConfiguration": {
+                  "Cpu": "0.25 vCPU",
+                  "Memory": "0.5 GB"
+                },
+                "HealthCheckConfiguration": {
+                  "Protocol": "HTTP",
+                  "Path": "/health",
+                  "Interval": 10,
+                  "Timeout": 5,
+                  "HealthyThreshold": 1,
+                  "UnhealthyThreshold": 5
+                }
+              }' > /tmp/apprunner-input.json
+
             aws apprunner create-service \
-              --service-name "$APP_RUNNER_SERVICE" \
               --region "$AWS_REGION" \
-              --source-configuration file:///tmp/source-config.json \
-              --instance-configuration '{"Cpu":"0.25 vCPU","Memory":"0.5 GB"}' \
-              --health-check-configuration '{"Protocol":"HTTP","Path":"/health","Interval":10,"Timeout":5,"HealthyThreshold":1,"UnhealthyThreshold":5}'
+              --cli-input-json file:///tmp/apprunner-input.json
           else
             echo "Updating existing App Runner service ($SERVICE_ARN)..."
+            # Build full CLI input JSON for update-service
+            jq -n \
+              --arg arn    "$SERVICE_ARN" \
+              --arg image  "$IMAGE_URI" \
+              --arg role   "$ACCESS_ROLE_ARN" \
+              --argjson envVars "$ENV_VARS" \
+              '{
+                "ServiceArn": $arn,
+                "SourceConfiguration": {
+                  "ImageRepository": {
+                    "ImageIdentifier": $image,
+                    "ImageConfiguration": {
+                      "Port": "8080",
+                      "RuntimeEnvironmentVariables": $envVars
+                    },
+                    "ImageRepositoryType": "ECR"
+                  },
+                  "AuthenticationConfiguration": {
+                    "AccessRoleArn": $role
+                  },
+                  "AutoDeploymentsEnabled": true
+                }
+              }' > /tmp/apprunner-input.json
+
             aws apprunner update-service \
-              --service-arn "$SERVICE_ARN" \
               --region "$AWS_REGION" \
-              --source-configuration file:///tmp/source-config.json
+              --cli-input-json file:///tmp/apprunner-input.json
           fi
 
       - name: Print App Runner URL
