@@ -225,11 +225,9 @@ func (s *authService) ConnectSocial(ctx context.Context, userID, platform, authC
 		}
 	} else if platform == "youtube" {
 		// For native Google Sign-In, the correct redirect_uri is "postmessage"
-		// (server auth code flow with no browser redirect).
+		// For native Google Sign-In, the correct redirect_uri is empty ("").
 		// For web OAuth code flow, the client sends the actual redirect_uri.
-		if redirectURI == "" {
-			redirectURI = "postmessage"
-		}
+		// For native Android/iOS, redirectURI should be empty ("").
 		accessToken, refreshToken, err := s.exchangeGoogleToken(authCode, redirectURI)
 		if err != nil {
 			return err
