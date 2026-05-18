@@ -78,7 +78,7 @@ func (h *JobHandler) GetFeed(c *gin.Context) {
 	}
 
 	// Map to response
-	var response []map[string]interface{}
+	response := make([]map[string]interface{}, 0)
 	for _, camp := range campaigns {
 		bp := brandMap[camp.BrandID]
 		brandName := bp.CompanyName
@@ -165,7 +165,7 @@ func (h *JobHandler) Apply(c *gin.Context) {
 func (h *JobHandler) MyApplications(c *gin.Context) {
 	userIDVal, _ := c.Get("userID")
 
-	var proposals []domain.Proposal
+	proposals := make([]domain.Proposal, 0)
 	h.db.Preload("Campaign").Where("creator_id = ?", userIDVal).Find(&proposals)
 
 	c.JSON(http.StatusOK, proposals)
