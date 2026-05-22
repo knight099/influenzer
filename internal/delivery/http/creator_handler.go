@@ -71,6 +71,12 @@ func NewCreatorHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFun
 
 	// Add analytics endpoint
 	g.GET("/:id/analytics", handler.GetAnalytics)
+
+	// On-demand AI analysis for a chosen time window (7/30/60 days).
+	// Body: {platform: "instagram"|"youtube", period_days: int, creator_id?: string}
+	// - creator_id omitted: requester must be a CREATOR; uses their cached data
+	// - creator_id present: requester must be a BRAND; uses target creator's cached data
+	apiGroup.POST("/ai-analysis", handler.AIAnalysisByPeriod)
 }
 
 func (h *CreatorHandler) Search(c *gin.Context) {
@@ -918,16 +924,21 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 		} else {
 			stats["youtube"] = ytStats
 
-			// Fetch recent videos and perform Gemini AI Brand Suitability / reach analysis
-			recentVideos, videoErr := h.fetchYouTubeVideos(user.YoutubeToken, 10)
+			// Fetch recent videos and perform Gemini AI Brand Suitability / reach analysis.
+			// Pull 25 so the client can locally filter to 7/30/60 day windows.
+			recentVideos, videoErr := h.fetchYouTubeVideos(user.YoutubeToken, 25)
 			if videoErr != nil && isTokenError(videoErr.Error()) && user.YoutubeRefreshToken != "" {
 				if newToken, refreshErr := h.refreshYouTubeToken(&user); refreshErr == nil {
-					recentVideos, videoErr = h.fetchYouTubeVideos(newToken, 10)
+					recentVideos, videoErr = h.fetchYouTubeVideos(newToken, 25)
 				}
 			}
 
 			if videoErr != nil {
 				fmt.Printf("Failed to fetch recent YouTube videos (continuing with channel stats only): %v\n", videoErr)
+			} else if len(recentVideos) > 0 {
+				// Cache recent videos so the mobile client can locally filter by period
+				// (7/30/60d) and re-run AI analysis on demand.
+				stats["youtube_videos"] = recentVideos
 			}
 
 			aiAnalysis, aiErr := h.generateYouTubeAIAnalysis(ytStats, recentVideos)
@@ -948,8 +959,8 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 		} else {
 			stats["instagram"] = igStats
 
-			// Fetch reels from the last 30 days (cap at 15 to bound API calls)
-			reels, reelsErr := h.fetchInstagramReels(user.InstagramToken, 30, 15)
+			// Fetch reels from the last 60 days (client-side period filter narrows further)
+			reels, reelsErr := h.fetchInstagramReels(user.InstagramToken, 60, 25)
 			if reelsErr != nil {
 				fmt.Printf("Failed to fetch Instagram reels: %v\n", reelsErr)
 			} else if len(reels) > 0 {
@@ -1009,6 +1020,252 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 		"instagram_needs_reconnection": instagramNeedsReconnect,
 		"youtube_needs_reconnection":   youtubeNeedsReconnect,
 	})
+}
+
+// AIAnalysisByPeriod re-runs Gemini brand-suitability analysis for a chosen
+// time window (typically 7/30/60 days) using the target creator's cached
+// reels/videos. Does not persist; returns the JSON inline so the client can
+// display it for the selected period.
+func (h *CreatorHandler) AIAnalysisByPeriod(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	var req struct {
+		Platform   string `json:"platform" binding:"required"`
+		PeriodDays int    `json:"period_days" binding:"required"`
+		CreatorID  string `json:"creator_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: " + err.Error()})
+		return
+	}
+	if req.Platform != "instagram" && req.Platform != "youtube" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "platform must be 'instagram' or 'youtube'"})
+		return
+	}
+	if req.PeriodDays <= 0 || req.PeriodDays > 365 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "period_days must be between 1 and 365"})
+		return
+	}
+
+	// Resolve target creator + auth
+	var requester domain.User
+	if err := h.db.Where("id = ?", userID).First(&requester).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Requester not found"})
+		return
+	}
+
+	targetID := req.CreatorID
+	if targetID == "" {
+		if requester.Role != domain.RoleCreator {
+			c.JSON(http.StatusForbidden, gin.H{"error": "creator_id is required for non-creator requesters"})
+			return
+		}
+		targetID = fmt.Sprintf("%v", userID)
+	} else if requester.Role != domain.RoleBrand && fmt.Sprintf("%v", userID) != targetID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only brands may request analysis for another creator"})
+		return
+	}
+
+	var target domain.User
+	if err := h.db.Preload("CreatorProfile").Where("id = ?", targetID).First(&target).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Target creator not found"})
+		return
+	}
+	if target.Role != domain.RoleCreator || target.CreatorProfile == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Target is not a creator with a profile"})
+		return
+	}
+
+	cached := target.CreatorProfile.CachedStats
+	if cached == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No cached stats for target — run refresh-stats first"})
+		return
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -req.PeriodDays)
+
+	if req.Platform == "instagram" {
+		igStats, _ := cached["instagram"].(map[string]interface{})
+		if igStats == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No Instagram stats cached for this creator"})
+			return
+		}
+		// Reels were stored as []InstagramReel which may have been marshalled to []interface{}
+		var reels []InstagramReel
+		if raw, ok := cached["instagram_reels"]; ok {
+			reels = coerceReels(raw, cutoff)
+		}
+		ai, err := h.generateInstagramAIAnalysis(igStats, reels)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "AI analysis failed: " + err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"platform":    "instagram",
+			"period_days": req.PeriodDays,
+			"reel_count":  len(reels),
+			"analysis":    ai,
+		})
+		return
+	}
+
+	// YouTube
+	ytStats, _ := cached["youtube"].(map[string]interface{})
+	if ytStats == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No YouTube stats cached for this creator"})
+		return
+	}
+	var videos []CreatorMediaItem
+	if raw, ok := cached["youtube_videos"]; ok {
+		videos = coerceMediaItems(raw, cutoff)
+	}
+	ai, err := h.generateYouTubeAIAnalysis(ytStats, videos)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "AI analysis failed: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"platform":    "youtube",
+		"period_days": req.PeriodDays,
+		"video_count": len(videos),
+		"analysis":    ai,
+	})
+}
+
+// coerceReels re-hydrates []InstagramReel from cached_stats (which round-trips
+// through JSON as []interface{} of map[string]interface{}) and filters by date.
+func coerceReels(raw interface{}, cutoff time.Time) []InstagramReel {
+	out := []InstagramReel{}
+	arr, ok := raw.([]interface{})
+	if !ok {
+		// Already typed (same-process call) — try direct assertion
+		if typed, ok := raw.([]InstagramReel); ok {
+			for _, r := range typed {
+				if ts, err := time.Parse(time.RFC3339, r.Timestamp); err == nil && ts.Before(cutoff) {
+					continue
+				}
+				out = append(out, r)
+			}
+			return out
+		}
+		return out
+	}
+	for _, item := range arr {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		ts, _ := m["timestamp"].(string)
+		if parsed, err := time.Parse(time.RFC3339, ts); err == nil && parsed.Before(cutoff) {
+			continue
+		}
+		toI := func(v interface{}) int64 {
+			switch x := v.(type) {
+			case float64:
+				return int64(x)
+			case int:
+				return int64(x)
+			case int64:
+				return x
+			case string:
+				var n int64
+				fmt.Sscanf(x, "%d", &n)
+				return n
+			}
+			return 0
+		}
+		toS := func(v interface{}) string {
+			if s, ok := v.(string); ok {
+				return s
+			}
+			return ""
+		}
+		out = append(out, InstagramReel{
+			ID:                toS(m["id"]),
+			Caption:           toS(m["caption"]),
+			Permalink:         toS(m["permalink"]),
+			ThumbnailURL:      toS(m["thumbnail_url"]),
+			MediaURL:          toS(m["media_url"]),
+			Timestamp:         ts,
+			Views:             toI(m["views"]),
+			Likes:             toI(m["likes"]),
+			Comments:          toI(m["comments"]),
+			Reach:             toI(m["reach"]),
+			Shares:            toI(m["shares"]),
+			Saves:             toI(m["saves"]),
+			TotalInteractions: toI(m["total_interactions"]),
+		})
+	}
+	return out
+}
+
+// coerceMediaItems is the equivalent for cached YouTube videos.
+func coerceMediaItems(raw interface{}, cutoff time.Time) []CreatorMediaItem {
+	out := []CreatorMediaItem{}
+	arr, ok := raw.([]interface{})
+	if !ok {
+		if typed, ok := raw.([]CreatorMediaItem); ok {
+			for _, v := range typed {
+				if ts, err := time.Parse(time.RFC3339, v.PublishedAt); err == nil && ts.Before(cutoff) {
+					continue
+				}
+				out = append(out, v)
+			}
+			return out
+		}
+		return out
+	}
+	for _, item := range arr {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		ts, _ := m["published_at"].(string)
+		if parsed, err := time.Parse(time.RFC3339, ts); err == nil && parsed.Before(cutoff) {
+			continue
+		}
+		toI := func(v interface{}) int64 {
+			switch x := v.(type) {
+			case float64:
+				return int64(x)
+			case int:
+				return int64(x)
+			case int64:
+				return x
+			case string:
+				var n int64
+				fmt.Sscanf(x, "%d", &n)
+				return n
+			}
+			return 0
+		}
+		toS := func(v interface{}) string {
+			if s, ok := v.(string); ok {
+				return s
+			}
+			return ""
+		}
+		out = append(out, CreatorMediaItem{
+			Platform:     toS(m["platform"]),
+			ID:           toS(m["id"]),
+			Title:        toS(m["title"]),
+			Caption:      toS(m["caption"]),
+			ThumbnailURL: toS(m["thumbnail_url"]),
+			MediaURL:     toS(m["media_url"]),
+			Permalink:    toS(m["permalink"]),
+			MediaType:    toS(m["media_type"]),
+			ViewCount:    toI(m["view_count"]),
+			LikeCount:    toI(m["like_count"]),
+			CommentCount: toI(m["comment_count"]),
+			Duration:     toI(m["duration"]),
+			PublishedAt:  ts,
+		})
+	}
+	return out
 }
 
 // isTokenError checks if an error message indicates a token/authentication issue
