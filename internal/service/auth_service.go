@@ -310,9 +310,10 @@ func (s *authService) exchangeGoogleToken(code, redirectURI string) (accessToken
 	values.Set("client_id", clientID)
 	values.Set("client_secret", clientSecret)
 	values.Set("grant_type", "authorization_code")
-	if redirectURI != "" {
-		values.Set("redirect_uri", redirectURI)
+	if redirectURI == "" {
+		redirectURI = "postmessage"
 	}
+	values.Set("redirect_uri", redirectURI)
 	values.Set("code", code)
 
 	resp, err := http.PostForm("https://oauth2.googleapis.com/token", values)

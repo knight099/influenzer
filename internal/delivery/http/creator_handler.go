@@ -7,6 +7,8 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -653,7 +655,14 @@ func (h *CreatorHandler) GetAnalytics(c *gin.Context) {
 
 		if user.YoutubeToken != "" {
 			// Per-video averages from last 20 videos
-			if items, err := h.fetchYouTubeVideos(user.YoutubeToken, 20); err == nil && len(items) > 0 {
+			items, err := h.fetchYouTubeVideos(user.YoutubeToken, 20)
+			if err != nil && isTokenError(err.Error()) && user.YoutubeRefreshToken != "" {
+				if newToken, refreshErr := h.refreshYouTubeToken(&user); refreshErr == nil {
+					items, err = h.fetchYouTubeVideos(newToken, 20)
+				}
+			}
+
+			if err == nil && len(items) > 0 {
 				var totalViews, totalLikes, totalComments, totalDuration int64
 				for _, item := range items {
 					totalViews += item.ViewCount
@@ -681,7 +690,13 @@ func (h *CreatorHandler) GetAnalytics(c *gin.Context) {
 			}
 
 			// YouTube Analytics API: 28-day aggregate (requires yt-analytics.readonly scope)
-			if analyticsData, err := h.fetchYouTubeAnalytics(user.YoutubeToken, 28); err == nil {
+			analyticsData, err := h.fetchYouTubeAnalytics(user.YoutubeToken, 28)
+			if err != nil && isTokenError(err.Error()) && user.YoutubeRefreshToken != "" {
+				if newToken, refreshErr := h.refreshYouTubeToken(&user); refreshErr == nil {
+					analyticsData, err = h.fetchYouTubeAnalytics(newToken, 28)
+				}
+			}
+			if err == nil {
 				ytAnalytics["analytics_28d"] = analyticsData
 			}
 		}
@@ -890,6 +905,12 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 	// Fetch YouTube stats if token exists
 	if user.YoutubeToken != "" {
 		ytStats, err := h.fetchYouTubeStats(user.YoutubeToken)
+		if err != nil && isTokenError(err.Error()) && user.YoutubeRefreshToken != "" {
+			if newToken, refreshErr := h.refreshYouTubeToken(&user); refreshErr == nil {
+				ytStats, err = h.fetchYouTubeStats(newToken)
+			}
+		}
+
 		if err != nil {
 			// Log but don't fail - token might be expired
 			fmt.Printf("Failed to fetch YouTube stats: %v\n", err)
@@ -899,6 +920,12 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 
 			// Fetch recent videos and perform Gemini AI Brand Suitability / reach analysis
 			recentVideos, err := h.fetchYouTubeVideos(user.YoutubeToken, 10)
+			if err != nil && isTokenError(err.Error()) && user.YoutubeRefreshToken != "" {
+				if newToken, refreshErr := h.refreshYouTubeToken(&user); refreshErr == nil {
+					recentVideos, err = h.fetchYouTubeVideos(newToken, 10)
+				}
+			}
+
 			if err == nil && len(recentVideos) > 0 {
 				aiAnalysis, aiErr := h.generateYouTubeAIAnalysis(ytStats, recentVideos)
 				if aiErr == nil {
@@ -1066,6 +1093,74 @@ func (h *CreatorHandler) fetchYouTubeStats(accessToken string) (map[string]inter
 	}, nil
 }
 
+func (h *CreatorHandler) refreshYouTubeToken(user *domain.User) (string, error) {
+	if user.YoutubeRefreshToken == "" {
+		return "", fmt.Errorf("no refresh token available")
+	}
+
+	clientID := os.Getenv("GOOGLE_WEB_CLIENT_ID")
+	if clientID == "" {
+		clientID = os.Getenv("GOOGLE_CLIENT_ID")
+	}
+	clientSecret := os.Getenv("GOOGLE_WEB_CLIENT_SECRET")
+	if clientSecret == "" {
+		clientSecret = os.Getenv("GOOGLE_CLIENT_SECRET")
+	}
+
+	if clientID == "" || clientSecret == "" {
+		return "", fmt.Errorf("google client credentials not configured")
+	}
+
+	values := url.Values{}
+	values.Set("client_id", clientID)
+	values.Set("client_secret", clientSecret)
+	values.Set("grant_type", "refresh_token")
+	values.Set("refresh_token", user.YoutubeRefreshToken)
+
+	resp, err := http.PostForm("https://oauth2.googleapis.com/token", values)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token refresh failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var res struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(bodyBytes, &res); err != nil {
+		return "", err
+	}
+
+	if res.AccessToken == "" {
+		return "", fmt.Errorf("no access token returned in response")
+	}
+
+	// Update GORM user model
+	user.YoutubeToken = res.AccessToken
+	if res.RefreshToken != "" {
+		user.YoutubeRefreshToken = res.RefreshToken
+	}
+
+	// Persist to database
+	if err := h.db.Model(user).Updates(map[string]interface{}{
+		"youtube_token":         user.YoutubeToken,
+		"youtube_refresh_token": user.YoutubeRefreshToken,
+	}).Error; err != nil {
+		return "", err
+	}
+
+	return res.AccessToken, nil
+}
+
 // InstagramUserResponse represents Instagram Graph API response
 type InstagramUserResponse struct {
 	ID             string `json:"id"`
@@ -1161,6 +1256,12 @@ func (h *CreatorHandler) GetCreatorMedia(c *gin.Context) {
 	if platform == "" || platform == "youtube" {
 		if user.YoutubeToken != "" {
 			items, err := h.fetchYouTubeVideos(user.YoutubeToken, limit)
+			if err != nil && isTokenError(err.Error()) && user.YoutubeRefreshToken != "" {
+				if newToken, refreshErr := h.refreshYouTubeToken(&user); refreshErr == nil {
+					items, err = h.fetchYouTubeVideos(newToken, limit)
+				}
+			}
+
 			if err != nil {
 				response["youtube_error"] = err.Error()
 			} else {
