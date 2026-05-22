@@ -129,7 +129,7 @@ type CreatorProfile struct {
 	UpdatedAt   time.Time                `json:"updated_at"`
 
 	// Embedding fields for AI matching
-	Embedding            pgvector.Vector `gorm:"type:vector(768)" json:"-"`
+	Embedding            *pgvector.Vector `gorm:"type:vector(768)" json:"-"`
 	EmbeddingLastUpdated *time.Time      `json:"embedding_last_updated,omitempty"`
 
 	// Relationship

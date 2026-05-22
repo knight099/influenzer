@@ -919,22 +919,22 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 			stats["youtube"] = ytStats
 
 			// Fetch recent videos and perform Gemini AI Brand Suitability / reach analysis
-			recentVideos, err := h.fetchYouTubeVideos(user.YoutubeToken, 10)
-			if err != nil && isTokenError(err.Error()) && user.YoutubeRefreshToken != "" {
+			recentVideos, videoErr := h.fetchYouTubeVideos(user.YoutubeToken, 10)
+			if videoErr != nil && isTokenError(videoErr.Error()) && user.YoutubeRefreshToken != "" {
 				if newToken, refreshErr := h.refreshYouTubeToken(&user); refreshErr == nil {
-					recentVideos, err = h.fetchYouTubeVideos(newToken, 10)
+					recentVideos, videoErr = h.fetchYouTubeVideos(newToken, 10)
 				}
 			}
 
-			if err == nil && len(recentVideos) > 0 {
-				aiAnalysis, aiErr := h.generateYouTubeAIAnalysis(ytStats, recentVideos)
-				if aiErr == nil {
-					stats["youtube_ai_analysis"] = aiAnalysis
-				} else {
-					fmt.Printf("YouTube AI analysis generation failed: %v\n", aiErr)
-				}
-			} else if err != nil {
-				fmt.Printf("Failed to fetch recent YouTube videos for AI analysis: %v\n", err)
+			if videoErr != nil {
+				fmt.Printf("Failed to fetch recent YouTube videos (continuing with channel stats only): %v\n", videoErr)
+			}
+
+			aiAnalysis, aiErr := h.generateYouTubeAIAnalysis(ytStats, recentVideos)
+			if aiErr == nil {
+				stats["youtube_ai_analysis"] = aiAnalysis
+			} else {
+				fmt.Printf("YouTube AI analysis generation failed: %v\n", aiErr)
 			}
 		}
 	}
@@ -1832,7 +1832,7 @@ Return ONLY the raw JSON object. Do not include markdown wraps or anything else.
 		return nil, fmt.Errorf("failed to marshal Gemini request: %w", err)
 	}
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s", h.geminiAPIKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=%s", h.geminiAPIKey)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)

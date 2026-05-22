@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+
 	"github.com/spf13/viper"
 )
 
@@ -62,5 +64,25 @@ func LoadConfig(path string) (config Config, err error) {
 
 	// Unmarshal config from both file and environment variables
 	err = viper.Unmarshal(&config)
+	if err == nil {
+		// Populate OS environment variables so that any third-party libraries or internal code
+		// that uses os.Getenv will function correctly.
+		os.Setenv("ENVIRONMENT", config.Environment)
+		os.Setenv("PORT", config.Port)
+		os.Setenv("DATABASE_URL", config.DatabaseURL)
+		os.Setenv("JWT_SECRET", config.JWTSecret)
+		os.Setenv("RAZORPAY_KEY_ID", config.RazorpayKeyID)
+		os.Setenv("RAZORPAY_KEY_SECRET", config.RazorpayKeySecret)
+		os.Setenv("RAZORPAY_WEBHOOK_SECRET", config.RazorpayWebhookSecret)
+		os.Setenv("RAZORPAY_ACCOUNT_NUMBER", config.RazorpayAccountNumber)
+		os.Setenv("GOOGLE_CLIENT_ID", config.GoogleClientID)
+		os.Setenv("GOOGLE_CLIENT_SECRET", config.GoogleClientSecret)
+		os.Setenv("GOOGLE_WEB_CLIENT_ID", config.GoogleWebClientID)
+		os.Setenv("GOOGLE_WEB_CLIENT_SECRET", config.GoogleWebClientSecret)
+		os.Setenv("INSTAGRAM_CLIENT_ID", config.InstagramClientID)
+		os.Setenv("INSTAGRAM_CLIENT_SECRET", config.InstagramClientSecret)
+		os.Setenv("INSTAGRAM_REDIRECT_URI", config.InstagramRedirectURI)
+		os.Setenv("GEMINI_API_KEY", config.GeminiAPIKey)
+	}
 	return
 }

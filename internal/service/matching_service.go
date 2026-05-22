@@ -233,8 +233,8 @@ func (s *MatchingService) FindMatchingCreators(query string, platform string, mi
 		sqlQuery = sqlQuery.Where("cp.min_budget <= ?", minBudget)
 	}
 
-	// Order by proximity (ascending cosine distance)
-	err = sqlQuery.Order("cp.embedding <=> ?").Limit(limit).Find(&rawResults).Error
+	// Order by proximity (ascending cosine distance <=> descending match_score)
+	err = sqlQuery.Order("match_score DESC").Limit(limit).Find(&rawResults).Error
 	if err != nil {
 		return nil, fmt.Errorf("database query failed: %w", err)
 	}

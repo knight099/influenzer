@@ -13,3 +13,7 @@ server
 
 # Module
 vendor/
+
+# Local debug tools (hardcoded personal emails)
+cmd/gen_token/
+cmd/inspect_db/
