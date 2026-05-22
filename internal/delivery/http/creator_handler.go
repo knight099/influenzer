@@ -947,6 +947,22 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 			stats["instagram_error"] = err.Error()
 		} else {
 			stats["instagram"] = igStats
+
+			// Fetch reels from the last 30 days (cap at 15 to bound API calls)
+			reels, reelsErr := h.fetchInstagramReels(user.InstagramToken, 30, 15)
+			if reelsErr != nil {
+				fmt.Printf("Failed to fetch Instagram reels: %v\n", reelsErr)
+			} else if len(reels) > 0 {
+				stats["instagram_reels"] = reels
+				stats["instagram_reels_aggregates"] = computeInstagramReelAggregates(reels, toInt64(igStats["followers_count"]))
+			}
+
+			aiAnalysis, aiErr := h.generateInstagramAIAnalysis(igStats, reels)
+			if aiErr == nil {
+				stats["instagram_ai_analysis"] = aiAnalysis
+			} else {
+				fmt.Printf("Instagram AI analysis generation failed: %v\n", aiErr)
+			}
 		}
 	}
 
@@ -1445,6 +1461,298 @@ func (h *CreatorHandler) fetchInstagramMedia(accessToken string, limit int) ([]C
 		})
 	}
 	return items, nil
+}
+
+// InstagramReel represents a single reel enriched with insight metrics.
+type InstagramReel struct {
+	ID                string `json:"id"`
+	Caption           string `json:"caption"`
+	Permalink         string `json:"permalink"`
+	ThumbnailURL      string `json:"thumbnail_url"`
+	MediaURL          string `json:"media_url"`
+	Timestamp         string `json:"timestamp"`
+	Views             int64  `json:"views"`
+	Likes             int64  `json:"likes"`
+	Comments          int64  `json:"comments"`
+	Reach             int64  `json:"reach"`
+	Shares            int64  `json:"shares"`
+	Saves             int64  `json:"saves"`
+	TotalInteractions int64  `json:"total_interactions"`
+}
+
+type igReelsMediaResponse struct {
+	Data []struct {
+		ID               string `json:"id"`
+		Caption          string `json:"caption"`
+		MediaType        string `json:"media_type"`
+		MediaProductType string `json:"media_product_type"`
+		MediaURL         string `json:"media_url"`
+		ThumbnailURL     string `json:"thumbnail_url"`
+		Permalink        string `json:"permalink"`
+		Timestamp        string `json:"timestamp"`
+		VideoViews       int64  `json:"video_views"`
+		LikeCount        int64  `json:"like_count"`
+		CommentsCount    int64  `json:"comments_count"`
+	} `json:"data"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// fetchInstagramReels fetches reels (media_product_type=REELS) published within the
+// last `sinceDays` days, up to `maxFetch` items. Each reel is enriched with insight
+// metrics via fetchInstagramReelInsights when permission allows.
+func (h *CreatorHandler) fetchInstagramReels(accessToken string, sinceDays, maxFetch int) ([]InstagramReel, error) {
+	fields := "id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,video_views,like_count,comments_count"
+	url := fmt.Sprintf(
+		"https://graph.instagram.com/me/media?fields=%s&limit=50&access_token=%s",
+		fields, accessToken,
+	)
+	resp, err := http.Get(url) //nolint:noctx
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach Instagram API: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var igResp igReelsMediaResponse
+	if err := json.Unmarshal(body, &igResp); err != nil {
+		return nil, err
+	}
+	if igResp.Error != nil {
+		return nil, fmt.Errorf("Instagram API error: %s", igResp.Error.Message)
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -sinceDays)
+	reels := make([]InstagramReel, 0)
+	for _, m := range igResp.Data {
+		if m.MediaProductType != "REELS" {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339, m.Timestamp)
+		if err == nil && ts.Before(cutoff) {
+			continue
+		}
+		thumb := m.ThumbnailURL
+		if thumb == "" {
+			thumb = m.MediaURL
+		}
+		reels = append(reels, InstagramReel{
+			ID:           m.ID,
+			Caption:      m.Caption,
+			Permalink:    m.Permalink,
+			ThumbnailURL: thumb,
+			MediaURL:     m.MediaURL,
+			Timestamp:    m.Timestamp,
+			Views:        m.VideoViews,
+			Likes:        m.LikeCount,
+			Comments:     m.CommentsCount,
+		})
+		if len(reels) >= maxFetch {
+			break
+		}
+	}
+
+	for i := range reels {
+		if ins, ok := h.fetchInstagramReelInsights(accessToken, reels[i].ID); ok {
+			if reels[i].Views == 0 {
+				reels[i].Views = ins["plays"]
+			}
+			reels[i].Reach = ins["reach"]
+			reels[i].Shares = ins["shares"]
+			reels[i].Saves = ins["saved"]
+			reels[i].TotalInteractions = ins["total_interactions"]
+		}
+	}
+	return reels, nil
+}
+
+// fetchInstagramReelInsights returns metric -> value for a single reel.
+// Returns ok=false if the call failed (e.g. token lacks instagram_manage_insights
+// or the account is not a Business/Creator account).
+func (h *CreatorHandler) fetchInstagramReelInsights(accessToken, mediaID string) (map[string]int64, bool) {
+	url := fmt.Sprintf(
+		"https://graph.instagram.com/%s/insights?metric=plays,reach,likes,comments,shares,saved,total_interactions&access_token=%s",
+		mediaID, accessToken,
+	)
+	resp, err := http.Get(url) //nolint:noctx
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false
+	}
+	var ins igInsightsResponse
+	if err := json.Unmarshal(body, &ins); err != nil {
+		return nil, false
+	}
+	if ins.Error != nil {
+		return nil, false
+	}
+	out := make(map[string]int64, len(ins.Data))
+	for _, d := range ins.Data {
+		if len(d.Values) == 0 {
+			continue
+		}
+		out[d.Name] = d.Values[0].Value
+	}
+	return out, true
+}
+
+// computeInstagramReelAggregates returns {avg_views, avg_likes, avg_comments,
+// avg_reach, avg_engagement, total_views, total_likes, total_reach, count,
+// engagement_rate} for a slice of reels. engagement_rate is (avg_likes+avg_comments+avg_shares+avg_saves)/followers*100.
+func computeInstagramReelAggregates(reels []InstagramReel, followers int64) map[string]interface{} {
+	out := map[string]interface{}{"count": len(reels)}
+	if len(reels) == 0 {
+		return out
+	}
+	var totalViews, totalLikes, totalComments, totalReach, totalShares, totalSaves int64
+	for _, r := range reels {
+		totalViews += r.Views
+		totalLikes += r.Likes
+		totalComments += r.Comments
+		totalReach += r.Reach
+		totalShares += r.Shares
+		totalSaves += r.Saves
+	}
+	n := int64(len(reels))
+	avgLikes := totalLikes / n
+	avgComments := totalComments / n
+	avgShares := totalShares / n
+	avgSaves := totalSaves / n
+	out["avg_views"] = totalViews / n
+	out["avg_likes"] = avgLikes
+	out["avg_comments"] = avgComments
+	out["avg_reach"] = totalReach / n
+	out["avg_shares"] = avgShares
+	out["avg_saves"] = avgSaves
+	out["total_views"] = totalViews
+	out["total_likes"] = totalLikes
+	out["total_reach"] = totalReach
+	if followers > 0 {
+		engRate := float64(avgLikes+avgComments+avgShares+avgSaves) / float64(followers) * 100
+		out["engagement_rate"] = fmt.Sprintf("%.2f", engRate)
+	}
+	return out
+}
+
+// generateInstagramAIAnalysis runs Gemini over the IG profile stats + recent reels
+// to produce a brand-suitability JSON, mirroring the YouTube AI analysis schema.
+func (h *CreatorHandler) generateInstagramAIAnalysis(igStats map[string]interface{}, recentReels []InstagramReel) (map[string]interface{}, error) {
+	if h.geminiAPIKey == "" {
+		return nil, fmt.Errorf("gemini api key is empty")
+	}
+
+	reelsSummary := make([]string, 0, len(recentReels))
+	for _, r := range recentReels {
+		caption := r.Caption
+		if len(caption) > 200 {
+			caption = caption[:200]
+		}
+		reelsSummary = append(reelsSummary, fmt.Sprintf("- Caption: %s | Views: %d | Likes: %d | Comments: %d | Reach: %d", caption, r.Views, r.Likes, r.Comments, r.Reach))
+	}
+
+	prompt := fmt.Sprintf(`You are an expert AI brand safety and content intelligence analyzer.
+Analyze the following Instagram creator's profile and recent reels to produce high-value suitability insights for brands.
+
+Profile Statistics:
+%+v
+
+Recent Reels (last 30 days):
+%s
+
+You MUST return a JSON object with the following schema:
+{
+  "channel_niche": "Primary content focus, e.g. Fashion & Lifestyle",
+  "content_style": "High-level creative style, e.g. Aesthetic Vlog / Comedy Skits",
+  "estimated_reach_score": 85,
+  "estimated_reach_description": "Explanation of reach consistency, view-to-follower ratio, and growth potential",
+  "audience_interests": ["Fashion", "Travel", "Beauty"],
+  "brand_safety_rating": "Safe",
+  "brand_safety_reasons": "Detailed explanation of any risks or a confirmation of safe content",
+  "recommended_campaign_categories": ["DTC Apparel", "Beauty Brands", "Travel Apps"],
+  "key_insights_for_brands": [
+    "Strong reel-to-follower view ratio (>30%%)",
+    "Consistent posting cadence",
+    "Highly engaged Gen-Z audience"
+  ]
+}
+
+brand_safety_rating must be exactly one of: "Safe", "Moderate", "Caution".
+audience_interests, recommended_campaign_categories, key_insights_for_brands must each have at most 4 items.
+Return ONLY the raw JSON object. Do not include markdown wraps or anything else.`, igStats, strings.Join(reelsSummary, "\n"))
+
+	type localPart struct {
+		Text string `json:"text"`
+	}
+	type localContent struct {
+		Parts []localPart `json:"parts"`
+	}
+	type localReqConfig struct {
+		ResponseMimeType string `json:"responseMimeType"`
+	}
+	type localRequest struct {
+		Contents         []localContent `json:"contents"`
+		GenerationConfig localReqConfig `json:"generationConfig"`
+	}
+
+	reqPayload := localRequest{
+		Contents: []localContent{{Parts: []localPart{{Text: prompt}}}},
+		GenerationConfig: localReqConfig{ResponseMimeType: "application/json"},
+	}
+	jsonBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Gemini request: %w", err)
+	}
+
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=%s", h.geminiAPIKey)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Gemini API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Gemini response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Gemini API non-200: %s", string(respBody))
+	}
+
+	var gResp struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(respBody, &gResp); err != nil {
+		return nil, fmt.Errorf("failed to parse Gemini wrapper: %w", err)
+	}
+	if len(gResp.Candidates) == 0 || len(gResp.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("Gemini response had no candidates")
+	}
+	raw := gResp.Candidates[0].Content.Parts[0].Text
+
+	var analysis map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &analysis); err != nil {
+		return nil, fmt.Errorf("failed to parse Gemini AI JSON: %w (body=%s)", err, raw)
+	}
+	return analysis, nil
 }
 
 // ── YouTube ──────────────────────────────────────────────────────────────────
