@@ -306,6 +306,10 @@ func (s *authService) exchangeGoogleToken(code, redirectURI string) (accessToken
 		clientSecret = s.cfg.GoogleClientSecret // fallback
 	}
 
+	if redirectURI == "" {
+		redirectURI = "postmessage"
+	}
+
 	values := url.Values{}
 	values.Set("client_id", clientID)
 	values.Set("client_secret", clientSecret)

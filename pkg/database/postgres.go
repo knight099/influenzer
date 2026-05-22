@@ -41,6 +41,11 @@ func Connect(dsn string) {
 }
 
 func AutoMigrate() {
+	// Enable pgvector extension before running auto migration
+	if err := DB.Exec("CREATE EXTENSION IF NOT EXISTS vector;").Error; err != nil {
+		log.Printf("Failed to enable pgvector extension: %v", err)
+	}
+
 	err := DB.AutoMigrate(
 		&domain.User{},
 		&domain.BrandProfile{},

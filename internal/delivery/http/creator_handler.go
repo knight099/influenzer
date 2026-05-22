@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +12,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/vaibhaw/influenzer-backend/internal/domain"
+	"github.com/vaibhaw/influenzer-backend/internal/service"
 	"gorm.io/gorm"
 )
 
@@ -33,11 +36,17 @@ type CreatorMediaItem struct {
 }
 
 type CreatorHandler struct {
-	db *gorm.DB
+	db              *gorm.DB
+	geminiAPIKey    string
+	matchingService *service.MatchingService
 }
 
-func NewCreatorHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFunc) {
-	handler := &CreatorHandler{db: db}
+func NewCreatorHandler(r *gin.Engine, db *gorm.DB, authMiddleware gin.HandlerFunc, geminiAPIKey string, matchingService *service.MatchingService) {
+	handler := &CreatorHandler{
+		db:              db,
+		geminiAPIKey:    geminiAPIKey,
+		matchingService: matchingService,
+	}
 
 	g := r.Group("/creators")
 	g.Use(authMiddleware)
@@ -462,6 +471,15 @@ func (h *CreatorHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
+	// Asynchronously update Gemini embedding for AI matching
+	if h.matchingService != nil {
+		go func(uid uuid.UUID) {
+			if err := h.matchingService.UpdateCreatorEmbedding(uid); err != nil {
+				fmt.Printf("Failed to update creator embedding on profile update: %v\n", err)
+			}
+		}(profile.UserID)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "Profile updated", "profile_complete": profile.ProfileComplete})
 }
 
@@ -878,6 +896,19 @@ func (h *CreatorHandler) RefreshStats(c *gin.Context) {
 			stats["youtube_error"] = err.Error()
 		} else {
 			stats["youtube"] = ytStats
+
+			// Fetch recent videos and perform Gemini AI Brand Suitability / reach analysis
+			recentVideos, err := h.fetchYouTubeVideos(user.YoutubeToken, 10)
+			if err == nil && len(recentVideos) > 0 {
+				aiAnalysis, aiErr := h.generateYouTubeAIAnalysis(ytStats, recentVideos)
+				if aiErr == nil {
+					stats["youtube_ai_analysis"] = aiAnalysis
+				} else {
+					fmt.Printf("YouTube AI analysis generation failed: %v\n", aiErr)
+				}
+			} else if err != nil {
+				fmt.Printf("Failed to fetch recent YouTube videos for AI analysis: %v\n", err)
+			}
 		}
 	}
 
@@ -1625,3 +1656,130 @@ func (h *CreatorHandler) fetchYouTubeAnalytics(accessToken string, days int) (ma
 	}
 	return result, nil
 }
+
+func (h *CreatorHandler) generateYouTubeAIAnalysis(ytStats map[string]interface{}, recentVideos []CreatorMediaItem) (map[string]interface{}, error) {
+	if h.geminiAPIKey == "" {
+		return nil, fmt.Errorf("gemini api key is empty")
+	}
+
+	// Prepare data to send to Gemini
+	videosSummary := make([]string, 0, len(recentVideos))
+	for _, v := range recentVideos {
+		videosSummary = append(videosSummary, fmt.Sprintf("- Title: %s | Description/Caption: %s | Views: %d", v.Title, v.Caption, v.ViewCount))
+	}
+
+	prompt := fmt.Sprintf(`You are an expert AI brand safety and channel intelligence analyzer.
+Analyze the following YouTube creator's channel statistics and recent video catalog to produce high-value suitability insights for brands.
+
+Channel Statistics:
+%+v
+
+Recent Videos:
+%s
+
+You MUST return a JSON object with the following schema:
+{
+  "channel_niche": "Primary content focus, e.g. Tech & Lifestyle",
+  "content_style": "High-level creative style, e.g. Informative/Vlog-style",
+  "estimated_reach_score": 85, // Integer 1-100 representing the consistency of engagement and reach
+  "estimated_reach_description": "Explanation of reach consistency, views, and growth potential",
+  "audience_interests": ["Tech Gadgets", "Productivity", "Travel"], // Max 4 strings
+  "brand_safety_rating": "Safe", // Must be exactly one of: "Safe", "Moderate", "Caution"
+  "brand_safety_reasons": "Detailed explanation of any risks, language use, controversies, or a confirmation of safe content",
+  "recommended_campaign_categories": ["SaaS Apps", "Tech Accessories", "E-learning Platforms"], // Max 4 strings
+  "key_insights_for_brands": [
+    "High view retention on video tutorials",
+    "Strong tech-savvy demographic alignment",
+    "Polished, professional brand integration potential"
+  ] // Bulleted benefits, max 4 items
+}
+
+Return ONLY the raw JSON object. Do not include markdown wraps or anything else.`, ytStats, strings.Join(videosSummary, "\n"))
+
+	// We define Part here because we're inside Delivery/Http, but actually Part/Content are already imported if they are in package,
+	// wait, are Part/Content already in pkg/embeddings/gemini.go? Yes, but here we can define them locally or use generic/inline structs.
+	// Let's define them with unique local names or inline to avoid conflicts.
+	type localPart struct {
+		Text string `json:"text"`
+	}
+	type localContent struct {
+		Parts []localPart `json:"parts"`
+	}
+	type localReqConfig struct {
+		ResponseMimeType string `json:"responseMimeType"`
+	}
+	type localRequest struct {
+		Contents         []localContent `json:"contents"`
+		GenerationConfig localReqConfig `json:"generationConfig"`
+	}
+
+	reqPayload := localRequest{
+		Contents: []localContent{
+			{
+				Parts: []localPart{
+					{Text: prompt},
+				},
+			},
+		},
+		GenerationConfig: localReqConfig{
+			ResponseMimeType: "application/json",
+		},
+	}
+
+	jsonBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Gemini request: %w", err)
+	}
+
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s", h.geminiAPIKey)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Gemini API call failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Gemini API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Parse the response
+	var geminiResp struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+
+	if err := json.Unmarshal(respBody, &geminiResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Gemini response: %w", err)
+	}
+
+	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("empty response from Gemini")
+	}
+
+	responseText := geminiResp.Candidates[0].Content.Parts[0].Text
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(responseText), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse AI analysis json: %w (raw response: %s)", err, responseText)
+	}
+
+	return result, nil
+}
+

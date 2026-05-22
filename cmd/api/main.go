@@ -97,9 +97,13 @@ func main() {
 	socialService := service.NewSocialService(proposalRepo, campaignRepo, authRepo)
 	httpDelivery.NewSocialHandler(r, socialService, authMiddleware)
 
+	// - AI Matching Module
+	matchingService := service.NewMatchingService(database.DB, cfg.GeminiAPIKey)
+	httpDelivery.NewMatchingHandler(r, matchingService, authMiddleware)
+
 	// - New Modules (Refactor)
 	httpDelivery.NewJobHandler(r, database.DB, authMiddleware)
-	httpDelivery.NewCreatorHandler(r, database.DB, authMiddleware)
+	httpDelivery.NewCreatorHandler(r, database.DB, authMiddleware, cfg.GeminiAPIKey, matchingService)
 	httpDelivery.NewBrandHandler(r, database.DB, authMiddleware)
 	httpDelivery.NewChatHTTPHandler(r, database.DB, authMiddleware)
 

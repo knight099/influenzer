@@ -20,6 +20,7 @@ type Config struct {
 	InstagramClientID     string `mapstructure:"INSTAGRAM_CLIENT_ID"`
 	InstagramClientSecret string `mapstructure:"INSTAGRAM_CLIENT_SECRET"`
 	InstagramRedirectURI  string `mapstructure:"INSTAGRAM_REDIRECT_URI"`
+	GeminiAPIKey          string `mapstructure:"GEMINI_API_KEY"`
 }
 
 func LoadConfig(path string) (config Config, err error) {
@@ -42,6 +43,7 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.BindEnv("INSTAGRAM_CLIENT_ID")
 	viper.BindEnv("INSTAGRAM_CLIENT_SECRET")
 	viper.BindEnv("INSTAGRAM_REDIRECT_URI")
+	viper.BindEnv("GEMINI_API_KEY")
 
 	// Try to read .env file (optional for local development)
 	viper.AddConfigPath(path)

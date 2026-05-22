@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pgvector/pgvector-go"
 	"gorm.io/gorm"
 )
 
@@ -126,6 +127,10 @@ type CreatorProfile struct {
 	CachedStats map[string]interface{}   `gorm:"serializer:json" json:"cached_stats"`
 	Portfolio   []map[string]interface{} `gorm:"serializer:json" json:"portfolio"` // [{ title, url, platform, thumbnail_url, description, category }]
 	UpdatedAt   time.Time                `json:"updated_at"`
+
+	// Embedding fields for AI matching
+	Embedding            pgvector.Vector `gorm:"type:vector(768)" json:"-"`
+	EmbeddingLastUpdated *time.Time      `json:"embedding_last_updated,omitempty"`
 
 	// Relationship
 	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`

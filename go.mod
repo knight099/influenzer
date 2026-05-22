@@ -1,6 +1,6 @@
 module github.com/vaibhaw/influenzer-backend
 
-go 1.24.5
+go 1.25.0
 
 require (
 	github.com/gin-contrib/cors v1.7.6
@@ -69,6 +69,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/pgvector/pgvector-go v0.4.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.58.0 // indirect
