@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -306,23 +307,47 @@ func (s *authService) exchangeGoogleToken(code, redirectURI string) (accessToken
 		clientSecret = s.cfg.GoogleClientSecret // fallback
 	}
 
-	values := url.Values{}
-	values.Set("client_id", clientID)
-	values.Set("client_secret", clientSecret)
-	values.Set("grant_type", "authorization_code")
-	if redirectURI == "" {
-		redirectURI = "postmessage"
-	}
-	values.Set("redirect_uri", redirectURI)
-	values.Set("code", code)
+	// Helper to perform token exchange request
+	doExchange := func(rUri string) (*http.Response, []byte, error) {
+		values := url.Values{}
+		values.Set("client_id", clientID)
+		values.Set("client_secret", clientSecret)
+		values.Set("grant_type", "authorization_code")
+		values.Set("code", code)
+		if rUri != "" {
+			values.Set("redirect_uri", rUri)
+		}
 
-	resp, err := http.PostForm("https://oauth2.googleapis.com/token", values)
+		resp, err := http.PostForm("https://oauth2.googleapis.com/token", values)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		return resp, bodyBytes, err
+	}
+
+	// Try 1: Try with the provided redirectURI (which is empty string for mobile, i.e. omitted)
+	resp, bodyBytes, err := doExchange(redirectURI)
 	if err != nil {
 		return "", "", err
 	}
-	defer resp.Body.Close()
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	// Try 2: If the first attempt failed due to a redirect_uri_mismatch, and redirectURI was empty,
+	// retry using the special "postmessage" redirect URI.
+	if resp.StatusCode != http.StatusOK && redirectURI == "" {
+		bodyStr := string(bodyBytes)
+		if strings.Contains(bodyStr, "redirect_uri_mismatch") {
+			fmt.Printf("Omitted redirect_uri failed with redirect_uri_mismatch. Retrying with 'postmessage'...\n")
+			resp2, bodyBytes2, err2 := doExchange("postmessage")
+			if err2 == nil {
+				resp = resp2
+				bodyBytes = bodyBytes2
+			}
+		}
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		fmt.Printf("Google Token Exchange failed: %s\n", string(bodyBytes))
 		return "", "", fmt.Errorf("google auth failed: %s", string(bodyBytes))
