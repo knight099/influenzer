@@ -1528,7 +1528,12 @@ func (h *CreatorHandler) fetchInstagramReels(accessToken string, sinceDays, maxF
 	cutoff := time.Now().AddDate(0, 0, -sinceDays)
 	reels := make([]InstagramReel, 0)
 	for _, m := range igResp.Data {
-		if m.MediaProductType != "REELS" {
+		// media_product_type=REELS is the canonical Graph-API marker. On Basic
+		// Display tokens (or older scopes) the field comes back empty — fall back
+		// to MediaType=VIDEO so reels still get picked up.
+		isReel := m.MediaProductType == "REELS" ||
+			(m.MediaProductType == "" && m.MediaType == "VIDEO")
+		if !isReel {
 			continue
 		}
 		ts, err := time.Parse(time.RFC3339, m.Timestamp)
