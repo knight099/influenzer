@@ -70,6 +70,7 @@ jobs:
           INSTAGRAM_CLIENT_ID: ${{ secrets.INSTAGRAM_CLIENT_ID }}
           INSTAGRAM_CLIENT_SECRET: ${{ secrets.INSTAGRAM_CLIENT_SECRET }}
           INSTAGRAM_REDIRECT_URI: ${{ secrets.INSTAGRAM_REDIRECT_URI }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           # Strip trailing newlines/carriage returns from all secrets
           # (GitHub secrets sometimes have trailing whitespace that breaks AWS API regex)
@@ -84,6 +85,7 @@ jobs:
           IG_ID_CLEAN=$(printf '%s' "$INSTAGRAM_CLIENT_ID" | tr -d '\n\r')
           IG_SEC_CLEAN=$(printf '%s' "$INSTAGRAM_CLIENT_SECRET" | tr -d '\n\r')
           IG_URI_CLEAN=$(printf '%s' "$INSTAGRAM_REDIRECT_URI" | tr -d '\n\r')
+          GEMINI_CLEAN=$(printf '%s' "$GEMINI_API_KEY" | tr -d '\n\r')
 
           # Write env vars JSON to file
           jq -n \
@@ -98,6 +100,7 @@ jobs:
             --arg ig_id    "$IG_ID_CLEAN" \
             --arg ig_sec   "$IG_SEC_CLEAN" \
             --arg ig_uri   "$IG_URI_CLEAN" \
+            --arg gemini   "$GEMINI_CLEAN" \
             '{
               "ENVIRONMENT":              "production",
               "PORT":                     "8080",
@@ -111,7 +114,8 @@ jobs:
               "GOOGLE_WEB_CLIENT_SECRET": $gw_sec,
               "INSTAGRAM_CLIENT_ID":      $ig_id,
               "INSTAGRAM_CLIENT_SECRET":  $ig_sec,
-              "INSTAGRAM_REDIRECT_URI":   $ig_uri
+              "INSTAGRAM_REDIRECT_URI":   $ig_uri,
+              "GEMINI_API_KEY":           $gemini
             }' > /tmp/env-vars.json
 
           # Debug: show keys and value lengths (never show actual values)
