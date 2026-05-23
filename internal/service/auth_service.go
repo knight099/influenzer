@@ -33,8 +33,21 @@ func NewAuthService(authRepo domain.AuthRepository, cfg *config.Config) domain.A
 func (s *authService) LoginWithGoogle(ctx context.Context, tokenString, providedName, providedAvatarURL string) (string, *domain.User, error) {
 	var email, googleID, name, picture string
 
-	// 1. Try to validate as ID Token
-	payload, err := idtoken.Validate(ctx, tokenString, s.cfg.GoogleClientID)
+	// 1. Try to validate as ID Token. The token may be issued for either the
+	// Android client (mobile native flow) or the Web client (browser GIS / web
+	// SDK), so try both before falling back to access-token userinfo.
+	allowedAuds := []string{s.cfg.GoogleClientID, s.cfg.GoogleWebClientID}
+	var payload *idtoken.Payload
+	var err error
+	for _, aud := range allowedAuds {
+		if aud == "" {
+			continue
+		}
+		payload, err = idtoken.Validate(ctx, tokenString, aud)
+		if err == nil {
+			break
+		}
+	}
 	if err == nil {
 		// Valid ID Token
 		if e, ok := payload.Claims["email"].(string); ok {
