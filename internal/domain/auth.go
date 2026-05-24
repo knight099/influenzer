@@ -20,7 +20,7 @@ type AuthService interface {
 	LoginWithEmail(ctx context.Context, email, password string) (string, *User, error)
 	Register(ctx context.Context, email, password string, role Role) (string, *User, error)
 	ConnectSocial(ctx context.Context, userID, platform, authCode, redirectURI string) error
-	SetRole(ctx context.Context, userID string, role Role) error
+	SetRole(ctx context.Context, userID string, role Role) (string, error)
 }
 
 // GoogleUserInfo represents the data fetched from Google UserInfo API

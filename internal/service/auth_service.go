@@ -257,10 +257,10 @@ func (s *authService) ConnectSocial(ctx context.Context, userID, platform, authC
 	return s.authRepo.UpdateUser(ctx, user)
 }
 
-func (s *authService) SetRole(ctx context.Context, userID string, role domain.Role) error {
+func (s *authService) SetRole(ctx context.Context, userID string, role domain.Role) (string, error) {
 	user, err := s.authRepo.GetBaseUserByID(ctx, userID)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Update the user's role
@@ -273,7 +273,13 @@ func (s *authService) SetRole(ctx context.Context, userID string, role domain.Ro
 		user.BrandProfile = &domain.BrandProfile{UserID: user.ID}
 	}
 
-	return s.authRepo.UpdateUser(ctx, user)
+	if err := s.authRepo.UpdateUser(ctx, user); err != nil {
+		return "", err
+	}
+
+	// Issue a fresh JWT carrying the new role so the client can swap it in
+	// without forcing a re-login.
+	return s.generateJWT(user)
 }
 
 func (s *authService) exchangeInstagramToken(code, redirectURI string) (string, error) {

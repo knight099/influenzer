@@ -242,14 +242,14 @@ func (h *AuthHandler) SetRole(c *gin.Context) {
 		return
 	}
 
-	err := h.authService.SetRole(c.Request.Context(), userID.(string), req.Role)
+	token, err := h.authService.SetRole(c.Request.Context(), userID.(string), req.Role)
 	if err != nil {
 		utils.Logger.Error("SetRole Service Error: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update role"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "role": req.Role})
+	c.JSON(http.StatusOK, gin.H{"success": true, "role": req.Role, "access_token": token})
 }
 
 // ServeSocialCallback serves an HTML page for OAuth redirects
